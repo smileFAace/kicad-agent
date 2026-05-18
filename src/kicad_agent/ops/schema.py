@@ -460,6 +460,96 @@ class CrossRefCheckOp(BaseModel):
     target_file: TargetFile
 
 
+class AssignFootprintOp(BaseModel):
+    """Assign a footprint to a schematic component.
+
+    Attributes:
+        op_type: Discriminator literal ``"assign_footprint"``.
+        target_file: Relative path to the target KiCad schematic file (H-01 validated).
+        reference: Component reference designator (e.g. ``"U1"``).
+        footprint_lib_id: Footprint library reference (e.g. ``"Package_DIP:DIP-8_W7.62mm"``).
+    """
+
+    op_type: Literal["assign_footprint"] = "assign_footprint"
+    target_file: TargetFile
+    reference: str = Field(
+        min_length=1,
+        max_length=64,
+        description="Component reference designator",
+    )
+    footprint_lib_id: str = Field(
+        min_length=1,
+        max_length=256,
+        description="Footprint library reference, e.g. 'Package_DIP:DIP-8_W7.62mm'",
+    )
+
+
+class SwapFootprintOp(BaseModel):
+    """Swap a PCB footprint while preserving pad-to-net connections.
+
+    Attributes:
+        op_type: Discriminator literal ``"swap_footprint"``.
+        target_file: Relative path to the target KiCad PCB file (H-01 validated).
+        reference: Reference designator of the footprint to swap.
+        new_footprint_lib_id: New footprint library reference.
+    """
+
+    op_type: Literal["swap_footprint"] = "swap_footprint"
+    target_file: TargetFile
+    reference: str = Field(
+        min_length=1,
+        max_length=64,
+        description="Reference designator of the footprint to swap",
+    )
+    new_footprint_lib_id: str = Field(
+        min_length=1,
+        max_length=256,
+        description="New footprint library reference",
+    )
+
+
+class ValidateFootprintOp(BaseModel):
+    """Validate that a footprint exists in the available libraries.
+
+    Attributes:
+        op_type: Discriminator literal ``"validate_footprint"``.
+        target_file: Relative path to the target KiCad file (H-01 validated).
+        footprint_lib_id: Footprint library reference to validate.
+    """
+
+    op_type: Literal["validate_footprint"] = "validate_footprint"
+    target_file: TargetFile
+    footprint_lib_id: str = Field(
+        min_length=1,
+        max_length=256,
+        description="Footprint library reference to validate",
+    )
+
+
+class VerifyPinMapOp(BaseModel):
+    """Verify that symbol pin numbers match footprint pad numbers.
+
+    Attributes:
+        op_type: Discriminator literal ``"verify_pin_map"``.
+        target_file: Relative path to the target KiCad file (H-01 validated).
+        reference: Component reference designator.
+        footprint_lib_id: Footprint library reference to verify against.
+    """
+
+    op_type: Literal["verify_pin_map"] = "verify_pin_map"
+    target_file: TargetFile
+    reference: str = Field(
+        min_length=1,
+        max_length=64,
+        description="Component reference designator",
+    )
+    footprint_lib_id: str = Field(
+        min_length=1,
+        max_length=256,
+        description="Footprint library reference to verify against",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Discriminated union (D-01, D-02, D-03)
 # ---------------------------------------------------------------------------
@@ -488,7 +578,11 @@ class Operation(BaseModel):
         | RenumberRefsOp
         | ValidateRefsOp
         | AnnotateOp
-        | CrossRefCheckOp,
+        | CrossRefCheckOp
+        | AssignFootprintOp
+        | SwapFootprintOp
+        | ValidateFootprintOp
+        | VerifyPinMapOp,
         Field(discriminator="op_type"),
     ]
 
