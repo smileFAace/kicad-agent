@@ -146,6 +146,7 @@ class OperationExecutor:
             return move_component(op, ir, file_type=file_type)
 
         if op_type == "modify_property":
-            raise NotImplementedError("modify_property not yet implemented")
+            from kicad_agent.ops.modify_property import modify_property
+            return modify_property(op, ir)
 
         raise ValueError(f"Unknown op_type: {op_type!r}")
