@@ -261,6 +261,93 @@ class SchematicIR(BaseIR):
 
         return changes
 
+    def assign_footprint(self, reference: str, footprint_lib_id: str) -> None:
+        """Assign a footprint to a component by updating the Footprint property.
+
+        Args:
+            reference: Component reference designator (e.g. "U1").
+            footprint_lib_id: Footprint library reference (e.g. "Package_DIP:DIP-8_W7.62mm").
+
+        Raises:
+            ValueError: If reference not found.
+        """
+        comp = self.get_component_by_ref(reference)
+        if comp is None:
+            raise ValueError(f"Component '{reference}' not found")
+
+        for prop in comp.properties:
+            if prop.key == "Footprint":
+                prop.value = footprint_lib_id
+                self._record_mutation("assign_footprint", {
+                    "reference": reference,
+                    "footprint_lib_id": footprint_lib_id,
+                })
+                return
+
+    def get_component_footprint(self, reference: str) -> Optional[str]:
+        """Get the current footprint libId for a component.
+
+        Args:
+            reference: Component reference designator.
+
+        Returns:
+            Footprint library string, or None if not set or component not found.
+        """
+        comp = self.get_component_by_ref(reference)
+        if comp is None:
+            return None
+        return self.get_component_property(comp, "Footprint")
+
+    def verify_pin_map(self, reference: str, footprint_lib_id: str) -> dict[str, Any]:
+        """Verify that symbol pin numbers match footprint pad numbers.
+
+        Checks the component's libId against the embedded libSymbols to find
+        pin definitions, then compares against the footprint's pad numbers.
+
+        Args:
+            reference: Component reference designator.
+            footprint_lib_id: Footprint library reference to verify against.
+
+        Returns:
+            Dict with:
+            - 'symbol_pins': set of pin numbers from the symbol
+            - 'footprint_pads': set of pad numbers (empty if no PCB loaded)
+            - 'missing_in_footprint': pin numbers in symbol but not footprint
+            - 'extra_in_footprint': pad numbers in footprint but not symbol
+            - 'match': bool - True if all symbol pins have corresponding pads
+        """
+        comp = self.get_component_by_ref(reference)
+        symbol_pins: set[str] = set()
+
+        if comp is not None:
+            # Look up the component's libId in embedded libSymbols
+            comp_lib_id = comp.libId
+            lib_symbols = self._parse_result.kiutils_obj.libSymbols
+            if lib_symbols:
+                for lib_sym in lib_symbols:
+                    if lib_sym.libId == comp_lib_id:
+                        # Collect pin numbers from all units
+                        for unit in lib_sym.units:
+                            for pin in unit.pins:
+                                if pin.number:
+                                    symbol_pins.add(pin.number)
+                        break
+
+        # Footprint pads: without a loaded PCB, we can't check the actual
+        # pad numbers. Return empty set for footprint_pads.
+        footprint_pads: set[str] = set()
+
+        missing_in_footprint = symbol_pins - footprint_pads
+        extra_in_footprint = footprint_pads - symbol_pins
+
+        return {
+            "symbol_pins": symbol_pins,
+            "footprint_pads": footprint_pads,
+            "missing_in_footprint": missing_in_footprint,
+            "extra_in_footprint": extra_in_footprint,
+            "match": len(missing_in_footprint) == 0,
+        }
+
     def cross_reference_check(self) -> list[tuple[str, str]]:
         """Verify all symbol libIds resolve to entries in the embedded libSymbols.
 

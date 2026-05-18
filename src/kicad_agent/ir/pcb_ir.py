@@ -187,3 +187,99 @@ class PcbIR(BaseIR):
                 if pad.net is not None and pad.net.name == net_name:
                     pads.append((fp.libId, pad.number))
         return pads
+
+    # -------------------------------------------------------------------
+    # Footprint query and mutation methods
+    # -------------------------------------------------------------------
+
+    def get_footprint_by_ref(self, reference: str) -> Optional[Any]:
+        """Find a PCB footprint by its reference designator.
+
+        KiCad footprints store the reference in the properties dict with
+        key 'Reference'.
+
+        Args:
+            reference: Reference designator to search for (e.g. "J1").
+
+        Returns:
+            kiutils Footprint object, or None if not found.
+        """
+        for fp in self.board.footprints:
+            ref = fp.properties.get("Reference", "")
+            if ref == reference:
+                return fp
+        return None
+
+    def swap_footprint(self, reference: str, new_footprint_lib_id: str) -> dict[str, Any]:
+        """Swap a footprint while preserving all pad-to-net connections.
+
+        This changes the footprint's libId but preserves pad.net assignments
+        for pads that exist in the new footprint (by matching pad numbers).
+
+        IMPORTANT: This does NOT reload the footprint geometry from the library.
+        It only updates the libId string and preserves pad net connections.
+
+        Args:
+            reference: Reference designator of the footprint to swap.
+            new_footprint_lib_id: New footprint library reference.
+
+        Returns:
+            Dict with 'old_lib_id', 'new_lib_id', 'preserved_nets' count.
+
+        Raises:
+            ValueError: If reference not found.
+        """
+        fp = self.get_footprint_by_ref(reference)
+        if fp is None:
+            raise ValueError(f"Footprint '{reference}' not found")
+
+        old_lib_id = fp.libId
+
+        # Save current pad-to-net mapping
+        pad_nets: dict[str, Any] = {}
+        for pad in fp.pads:
+            if pad.net is not None:
+                pad_nets[pad.number] = Net(number=pad.net.number, name=pad.net.name)
+
+        # Update the libId
+        fp.libId = new_footprint_lib_id
+
+        # Restore pad nets for matching pad numbers
+        preserved_count = 0
+        for pad in fp.pads:
+            if pad.number in pad_nets:
+                pad.net = Net(number=pad_nets[pad.number].number, name=pad_nets[pad.number].name)
+                preserved_count += 1
+            else:
+                pad.net = None
+
+        self._record_mutation("swap_footprint", {
+            "reference": reference,
+            "old_lib_id": old_lib_id,
+            "new_lib_id": new_footprint_lib_id,
+            "preserved_nets": preserved_count,
+        })
+
+        return {
+            "old_lib_id": old_lib_id,
+            "new_lib_id": new_footprint_lib_id,
+            "preserved_nets": preserved_count,
+        }
+
+    def get_footprint_pads(self, reference: str) -> list[tuple[str, str]]:
+        """Get (pad_number, net_name) tuples for a footprint.
+
+        Args:
+            reference: Reference designator of the footprint.
+
+        Returns:
+            List of (pad_number, net_name) tuples. Unconnected pads have net_name="".
+        """
+        fp = self.get_footprint_by_ref(reference)
+        if fp is None:
+            return []
+        result: list[tuple[str, str]] = []
+        for pad in fp.pads:
+            net_name = pad.net.name if pad.net is not None else ""
+            result.append((pad.number, net_name))
+        return result
