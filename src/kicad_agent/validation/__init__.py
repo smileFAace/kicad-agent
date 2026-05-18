@@ -1,4 +1,4 @@
-"""KiCad file validation: round-trip stability, ERC, and DRC."""
+"""KiCad file validation: round-trip stability, ERC, DRC, and pipeline."""
 
 from kicad_agent.validation.roundtrip import round_trip_stable, round_trip_compare
 from kicad_agent.validation.erc_drc import (
@@ -8,6 +8,19 @@ from kicad_agent.validation.erc_drc import (
     DrcResult,
     Violation,
     Severity,
+)
+from kicad_agent.validation.structural import (
+    validate_structural,
+    validate_uuid_uniqueness,
+    StructuralResult,
+    StructuralViolation,
+    ViolationKind,
+)
+from kicad_agent.validation.pipeline import (
+    ValidationPipeline,
+    PipelineResult,
+    PipelineStage,
+    StageResult,
 )
 
 __all__ = [
@@ -19,4 +32,13 @@ __all__ = [
     "DrcResult",
     "Violation",
     "Severity",
+    "validate_structural",
+    "validate_uuid_uniqueness",
+    "StructuralResult",
+    "StructuralViolation",
+    "ViolationKind",
+    "ValidationPipeline",
+    "PipelineResult",
+    "PipelineStage",
+    "StageResult",
 ]
