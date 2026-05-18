@@ -249,21 +249,21 @@ class TestPcbIRRemoveNet:
 
     def test_remove_net(self) -> None:
         """Test 14: remove_net removes Net and clears pad connections."""
-        # Find a net with connected pads
-        gnd_pads = self.ir.get_net_pads("GND")
+        gnd_pads_before = self.ir.get_net_pads("GND")
+        assert len(gnd_pads_before) > 0, "GND should have connected pads"
         initial_count = len(self.ir.nets)
 
         self.ir.remove_net("GND")
 
         assert len(self.ir.nets) == initial_count - 1
         assert self.ir.get_net_by_name("GND") is None
-        # Verify pads are disconnected
-        for fp_lib, pad_num in gnd_pads:
-            for fp in self.ir.footprints:
-                if fp.libId == fp_lib:
-                    for pad in fp.pads:
-                        if pad.number == pad_num:
-                            assert pad.net is None
+        # No pads should be connected to GND after removal
+        for fp in self.ir.footprints:
+            for pad in fp.pads:
+                if pad.net is not None:
+                    assert pad.net.name != "GND", (
+                        f"Pad {pad.number} on {fp.libId} still connected to GND"
+                    )
 
     def test_remove_missing_net_raises(self) -> None:
         """Test 15: remove_net raises ValueError if net not found."""

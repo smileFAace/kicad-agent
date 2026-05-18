@@ -79,3 +79,23 @@ class SchematicIR(BaseIR):
             if prop.key == property_key:
                 return prop.value
         return None
+
+    def get_labels_by_name(self, name: str) -> list:
+        """Find all local labels with matching text.
+
+        Args:
+            name: Label text to search for.
+
+        Returns:
+            List of kiutils LocalLabel objects with text matching the name.
+        """
+        return [
+            label
+            for label in self._parse_result.kiutils_obj.labels
+            if label.text == name
+        ]
+
+    @property
+    def bus_aliases(self) -> list:
+        """Access to schematic bus aliases (KiCad 10+)."""
+        return self._parse_result.kiutils_obj.busAliases
