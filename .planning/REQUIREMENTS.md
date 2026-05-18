@@ -43,10 +43,10 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Reference Management
 
-- [ ] **REF-01**: Renumber references with configurable prefix and sequencing
-- [ ] **REF-02**: Validate reference uniqueness across schematic sheets
-- [ ] **REF-03**: Cross-reference check: verify symbol references resolve to valid library entries
-- [ ] **REF-04**: Annotate schematic: auto-assign references to unannotated components
+- [x] **REF-01**: Renumber references with configurable prefix and sequencing
+- [x] **REF-02**: Validate reference uniqueness across schematic sheets
+- [x] **REF-03**: Cross-reference check: verify symbol references resolve to valid library entries
+- [x] **REF-04**: Annotate schematic: auto-assign references to unannotated components
 
 ### Footprint Management
 
@@ -148,10 +148,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | NET-03 | Phase 5: Net/Ref/FP Operations | Complete |
 | NET-04 | Phase 5: Net/Ref/FP Operations | Complete |
 | NET-05 | Phase 5: Net/Ref/FP Operations | Pending |
-| REF-01 | Phase 5: Net/Ref/FP Operations | Pending |
-| REF-02 | Phase 5: Net/Ref/FP Operations | Pending |
-| REF-03 | Phase 5: Net/Ref/FP Operations | Pending |
-| REF-04 | Phase 5: Net/Ref/FP Operations | Pending |
+| REF-01 | Phase 5: Net/Ref/FP Operations | Complete |
+| REF-02 | Phase 5: Net/Ref/FP Operations | Complete |
+| REF-03 | Phase 5: Net/Ref/FP Operations | Complete |
+| REF-04 | Phase 5: Net/Ref/FP Operations | Complete |
 | FP-01 | Phase 5: Net/Ref/FP Operations | Pending |
 | FP-02 | Phase 5: Net/Ref/FP Operations | Pending |
 | FP-03 | Phase 5: Net/Ref/FP Operations | Pending |

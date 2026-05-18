@@ -107,7 +107,7 @@ Plans:
 
 Plans:
 - [x] 05-01-PLAN.md -- Net CRUD and bus operations (NET-01, NET-02, NET-03, NET-04)
-- [ ] 05-02-PLAN.md -- Reference management (renumber, validate, annotate, cross-reference) (REF-01, REF-02, REF-03, REF-04)
+- [x] 05-02-PLAN.md -- Reference management (renumber, validate, annotate, cross-reference) (REF-01, REF-02, REF-03, REF-04)
 - [ ] 05-03-PLAN.md -- Footprint management (assign, swap, validate, pin mapping) (FP-01, FP-02, FP-03, FP-04)
 - [ ] 05-04-PLAN.md -- Net connectivity graph analysis via networkx (NET-05)
 
@@ -157,6 +157,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
 | 2. Operation Schema and IR Layer | 3/3 | Complete | 2026-05-18 |
 | 3. Validation Pipeline | 3/3 | Complete | 2026-05-18 |
 | 4. Component Operations | 3/3 | Complete | 2026-05-18 |
-| 5. Net, Reference, and Footprint Operations | 1/4 | In Progress | - |
+| 5. Net, Reference, and Footprint Operations | 2/4 | In Progress | - |
 | 6. Cross-File Operations and Analysis | 0/4 | Not started | - |
 | 7. GSD Skill Integration | 0/4 | Not started | - |
