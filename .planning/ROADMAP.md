@@ -14,7 +14,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Foundation -- Parse, Serialize, Round-trip** - Parse all 4 KiCad file types with zero-diff round-trip fidelity
 - [x] **Phase 2: Operation Schema and IR Layer** - Define the JSON intent contract and IR dataclasses that insulates the LLM from raw S-expressions
-- [ ] **Phase 3: Validation Pipeline** - ERC/DRC gates, structural checks, and error recovery before any mutation
+- [x] **Phase 3: Validation Pipeline** - ERC/DRC gates, structural checks, and error recovery before any mutation
 - [ ] **Phase 4: Component Operations** - Add, remove, duplicate, move, and modify components with transaction safety
 - [ ] **Phase 5: Net, Reference, and Footprint Operations** - Net CRUD, bus operations, reference management, footprint assignment
 - [ ] **Phase 6: Cross-File Operations and Analysis** - Schematic-to-PCB consistency, library propagation, structural diffs, connectivity analysis
@@ -72,7 +72,7 @@ Plans:
 Plans:
 - [x] 03-01-PLAN.md -- kicad-cli ERC/DRC wrappers with structured result parsing (VAL-01, VAL-02)
 - [x] 03-02-PLAN.md -- Pre-mutation structural validator and UUID uniqueness checker (VAL-05)
-- [ ] 03-03-PLAN.md -- Error recovery pipeline with automatic rollback on validation failure (VAL-03, VAL-06)
+- [x] 03-03-PLAN.md -- Error recovery pipeline with automatic rollback on validation failure (VAL-03, VAL-06)
 
 ### Phase 4: Component Operations
 **Goal**: Users can add, remove, duplicate, move, and modify components in a schematic with full validation safety
@@ -155,7 +155,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
 |-------|----------------|--------|-----------|
 | 1. Foundation -- Parse, Serialize, Round-trip | 3/3 | Complete | 2026-05-18 |
 | 2. Operation Schema and IR Layer | 3/3 | Complete | 2026-05-18 |
-| 3. Validation Pipeline | 2/3 | In Progress | - |
+| 3. Validation Pipeline | 3/3 | Complete | 2026-05-18 |
 | 4. Component Operations | 0/3 | Not started | - |
 | 5. Net, Reference, and Footprint Operations | 0/4 | Not started | - |
 | 6. Cross-File Operations and Analysis | 0/4 | Not started | - |

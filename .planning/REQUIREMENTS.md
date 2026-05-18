@@ -59,10 +59,10 @@ Requirements for initial release. Each maps to roadmap phases.
 
 - [x] **VAL-01**: ERC gate via kicad-cli with structured result parsing (pass/fail/warning)
 - [x] **VAL-02**: DRC gate via kicad-cli with structured result parsing
-- [ ] **VAL-03**: Net consistency verification between schematic and PCB netlists
+- [x] **VAL-03**: Net consistency verification between schematic and PCB netlists
 - [ ] **VAL-04**: Structural/syntax-aware diff generation for S-expressions (difftastic integration)
 - [x] **VAL-05**: Pre-mutation structural validation (catch invalid operations before execution)
-- [ ] **VAL-06**: Automated error recovery: rollback to last valid state on validation failure
+- [x] **VAL-06**: Automated error recovery: rollback to last valid state on validation failure
 - [x] **VAL-07**: Round-trip fidelity regression test suite (parse -> serialize -> compare)
 
 ### Cross-File Operations
@@ -134,9 +134,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | OPS-03 | Phase 2: Schema + IR | Complete |
 | VAL-01 | Phase 3: Validation Pipeline | Complete |
 | VAL-02 | Phase 3: Validation Pipeline | Complete |
-| VAL-03 | Phase 3: Validation Pipeline | Pending |
+| VAL-03 | Phase 3: Validation Pipeline | Complete |
 | VAL-05 | Phase 3: Validation Pipeline | Complete |
-| VAL-06 | Phase 3: Validation Pipeline | Pending |
+| VAL-06 | Phase 3: Validation Pipeline | Complete |
 | COMP-01 | Phase 4: Component Operations | Pending |
 | COMP-02 | Phase 4: Component Operations | Pending |
 | COMP-03 | Phase 4: Component Operations | Pending |
@@ -173,4 +173,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-05-17*
-*Last updated: 2026-05-18 after 03-02 plan completion*
+*Last updated: 2026-05-18 after 03-03 plan completion*
