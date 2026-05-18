@@ -32,6 +32,11 @@ logger = logging.getLogger(__name__)
 _ir_registry: set[int] = set()
 
 
+def _clear_registry() -> None:
+    """Clear the IR registry. For testing only."""
+    _ir_registry.clear()
+
+
 @dataclass
 class BaseIR:
     """Base class for all IR types. Tracks mutation state.
