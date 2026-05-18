@@ -13,20 +13,10 @@ Usage:
 """
 
 from pathlib import Path
-from dataclasses import dataclass
-from typing import Any
 
 from kiutils.symbol import SymbolLib
 
-
-@dataclass(frozen=True)
-class ParseResult:
-    """Generic container for parsed KiCad file content."""
-
-    kiutils_obj: Any
-    raw_content: str
-    file_path: Path
-    file_type: str
+from kicad_agent.parser.types import ParseResult
 
 
 def parse_symbol_lib(path: Path) -> ParseResult:

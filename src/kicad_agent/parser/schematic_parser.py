@@ -12,27 +12,10 @@ Usage:
 """
 
 from pathlib import Path
-from dataclasses import dataclass
-from typing import Any
 
 from kiutils.schematic import Schematic
 
-
-@dataclass(frozen=True)
-class ParseResult:
-    """Generic container for parsed KiCad file content.
-
-    Attributes:
-        kiutils_obj: The typed kiutils object (Schematic, Board, SymbolLib, Footprint).
-        raw_content: Original file text preserved for UUID extraction and fallback processing.
-        file_path: Source file path.
-        file_type: One of: 'schematic', 'pcb', 'symbol_lib', 'footprint'.
-    """
-
-    kiutils_obj: Any
-    raw_content: str
-    file_path: Path
-    file_type: str
+from kicad_agent.parser.types import ParseResult
 
 
 def parse_schematic(path: Path) -> ParseResult:
