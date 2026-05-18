@@ -27,6 +27,11 @@ def serialize_symbol_lib(parse_result: ParseResult, output_path: Path) -> Path:
     Returns:
         The output path (same as input output_path).
     """
+    if parse_result.file_type != "symbol_lib":
+        raise ValueError(
+            f"Expected file_type='symbol_lib', got file_type={parse_result.file_type!r}"
+        )
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     parse_result.kiutils_obj.to_file(str(output_path))
     return output_path

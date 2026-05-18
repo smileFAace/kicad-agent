@@ -29,44 +29,29 @@ from kicad_agent.serializer.schematic_ser import serialize_schematic
 from kicad_agent.serializer.pcb_ser import serialize_pcb
 from kicad_agent.serializer.symbol_ser import serialize_symbol_lib
 from kicad_agent.serializer.footprint_ser import serialize_footprint
+from kicad_agent.validation.constants import SUFFIX_MAP
 
-
-# Map file suffix to (parser, serializer, file_type, needs_uuid)
-_FILE_TYPE_CONFIG: dict[str, tuple[object, object, str, bool]] = {}
-
-# Will be populated in _get_config to avoid circular style issues
-_SUFFIX_MAP = {
-    ".kicad_sch": ("schematic", False),
-    ".kicad_pcb": ("pcb", True),
-    ".kicad_sym": ("symbol_lib", False),
-    ".kicad_mod": ("footprint", True),
+# Dispatch table mapping file_type to (parse_func, serialize_func)
+_DISPATCH_TABLE: dict[str, tuple[object, object]] = {
+    "schematic": (parse_schematic, serialize_schematic),
+    "pcb": (parse_pcb, serialize_pcb),
+    "symbol_lib": (parse_symbol_lib, serialize_symbol_lib),
+    "footprint": (parse_footprint, serialize_footprint),
 }
 
 
 def _get_parse_func(file_type: str):
     """Get the parse function for a file type."""
-    if file_type == "schematic":
-        return parse_schematic
-    elif file_type == "pcb":
-        return parse_pcb
-    elif file_type == "symbol_lib":
-        return parse_symbol_lib
-    elif file_type == "footprint":
-        return parse_footprint
-    raise ValueError(f"Unknown file type: {file_type}")
+    if file_type not in _DISPATCH_TABLE:
+        raise ValueError(f"Unknown file type: {file_type}")
+    return _DISPATCH_TABLE[file_type][0]
 
 
 def _get_serialize_func(file_type: str):
     """Get the serialize function for a file type."""
-    if file_type == "schematic":
-        return serialize_schematic
-    elif file_type == "pcb":
-        return serialize_pcb
-    elif file_type == "symbol_lib":
-        return serialize_symbol_lib
-    elif file_type == "footprint":
-        return serialize_footprint
-    raise ValueError(f"Unknown file type: {file_type}")
+    if file_type not in _DISPATCH_TABLE:
+        raise ValueError(f"Unknown file type: {file_type}")
+    return _DISPATCH_TABLE[file_type][1]
 
 
 @dataclass(frozen=True)
@@ -132,10 +117,10 @@ def round_trip_stable(path: Path, tmp_dir: Path) -> bool:
         True if pass1 == pass2 (byte-identical), False otherwise.
     """
     suffix = path.suffix
-    if suffix not in _SUFFIX_MAP:
+    if suffix not in SUFFIX_MAP:
         raise ValueError(f"Unknown KiCad file type: {suffix}")
 
-    file_type, needs_uuid = _SUFFIX_MAP[suffix]
+    file_type, needs_uuid = SUFFIX_MAP[suffix]
 
     pass1_dir = tmp_dir / "pass1"
     pass2_dir = tmp_dir / "pass2"
@@ -171,14 +156,14 @@ def round_trip_compare(path: Path, tmp_dir: Path) -> RoundTripResult:
         RoundTripResult with stability status and details.
     """
     suffix = path.suffix
-    if suffix not in _SUFFIX_MAP:
+    if suffix not in SUFFIX_MAP:
         return RoundTripResult(
             is_stable=False,
             original_path=path,
             error=f"Unknown KiCad file type: {suffix}",
         )
 
-    file_type, needs_uuid = _SUFFIX_MAP[suffix]
+    file_type, needs_uuid = SUFFIX_MAP[suffix]
 
     pass1_dir = tmp_dir / "pass1"
     pass2_dir = tmp_dir / "pass2"

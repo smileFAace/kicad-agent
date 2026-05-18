@@ -110,7 +110,7 @@ class TestReinjectUuids:
         # Simulate kiutils output (no UUIDs) and a UUIDMap to restore
         serialized = '  (footprint "Resistor"\n    (pad 1 thru_hole circle)\n  )'
         uuid_map = UUIDMap(
-            entries=[
+            entries=(
                 UUIDEntry(
                     uuid_value="aaaa1111-2222-3333-4444-555566667777",
                     parent_type="footprint",
@@ -123,7 +123,7 @@ class TestReinjectUuids:
                     parent_index=0,
                     line_number=2,
                 ),
-            ],
+            ),
             source_file_type="footprint",
         )
         result = reinject_uuids(serialized, uuid_map)
@@ -133,7 +133,7 @@ class TestReinjectUuids:
     def test_reinject_uuids_empty_map_returns_content(self) -> None:
         """Test 6: reinject_uuids with empty UUIDMap returns content unchanged."""
         content = "  (some content without uuids)\n"
-        uuid_map = UUIDMap(entries=[], source_file_type="pcb")
+        uuid_map = UUIDMap(entries=(), source_file_type="pcb")
         result = reinject_uuids(content, uuid_map)
         assert result == content
 

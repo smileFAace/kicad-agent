@@ -9,7 +9,6 @@ projects for testing all four file types (.kicad_sch, .kicad_pcb, .kicad_sym,
 """
 
 from pathlib import Path
-import shutil
 
 import pytest
 
@@ -98,19 +97,3 @@ def tmp_output_dir(tmp_path: Path) -> Path:
         Path to a clean temporary directory.
     """
     return tmp_path
-
-
-def copy_to_fixtures(src: Path, name: str) -> Path:
-    """Copy a KiCad file into the fixtures directory for isolated testing.
-
-    Args:
-        src: Source file path to copy.
-        name: Target filename in the fixtures directory.
-
-    Returns:
-        Path to the copied file in the fixtures directory.
-    """
-    FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
-    dest = FIXTURE_DIR / name
-    shutil.copy2(src, dest)
-    return dest

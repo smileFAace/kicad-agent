@@ -13,20 +13,15 @@ Usage:
     assert result.all_passed
 """
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 from kicad_agent.validation.roundtrip import round_trip_compare
+from kicad_agent.validation.constants import FILE_TYPE_NAMES
 
-
-# File extensions to scan for, mapped to display names
-_KICAD_EXTENSIONS: dict[str, str] = {
-    ".kicad_sch": "schematic",
-    ".kicad_pcb": "pcb",
-    ".kicad_sym": "symbol_lib",
-    ".kicad_mod": "footprint",
-}
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -79,8 +74,8 @@ def _scan_fixture_files(fixture_dir: Path) -> list[tuple[Path, str]]:
     """
     discovered: list[tuple[Path, str]] = []
     for path in sorted(fixture_dir.rglob("*")):
-        if path.is_file() and path.suffix in _KICAD_EXTENSIONS:
-            file_type = _KICAD_EXTENSIONS[path.suffix]
+        if path.is_file() and path.suffix in FILE_TYPE_NAMES:
+            file_type = FILE_TYPE_NAMES[path.suffix]
             discovered.append((path, file_type))
     return discovered
 
@@ -134,14 +129,18 @@ def run_regression_suite(
         all_passed=all_passed,
     )
 
-    # Print summary
+    # Log summary
     uuid_files = [
         r for r in results if r.file_type in ("pcb", "footprint")
     ]
     uuid_ok = sum(1 for r in uuid_files if r.uuid_preserved is True)
-    print(
-        f"PASS: {passed}/{len(results)} files stable. "
-        f"UUID preservation: {uuid_ok}/{len(uuid_files)} PCB/footprint files."
+    logger.info(
+        "PASS: %d/%d files stable. "
+        "UUID preservation: %d/%d PCB/footprint files.",
+        passed,
+        len(results),
+        uuid_ok,
+        len(uuid_files),
     )
 
     return suite_result

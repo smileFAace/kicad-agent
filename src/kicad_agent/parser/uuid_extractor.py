@@ -10,19 +10,23 @@ Usage:
 
     raw = path.read_text()
     uuid_map = extract_uuids(raw, file_type="pcb")
-    # uuid_map.entries -> list of UUIDEntry with structural context
+    # uuid_map.entries -> tuple of UUIDEntry with structural context
 """
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 
 # UUID v4 format: 8-4-4-4-12 hex digits separated by hyphens
+# KiCad 7+ always uses quoted UUIDs
 _UUID_PATTERN = re.compile(
-    r'\(uuid\s+"?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"?\)',
+    r'\(uuid\s+"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"\)',
     re.IGNORECASE,
 )
+
+# Valid file types for extraction
+_VALID_FILE_TYPES = frozenset({"pcb", "footprint", "schematic", "symbol_lib"})
 
 # Parent type patterns -- match enclosing S-expression types that can contain UUIDs
 # Each pattern finds the opening token of the enclosing S-expression
@@ -75,16 +79,16 @@ class UUIDEntry:
     line_number: int
 
 
-@dataclass
+@dataclass(frozen=True)
 class UUIDMap:
     """Map of all UUIDs extracted from a KiCad file, keyed by structural position.
 
     Attributes:
-        entries: Ordered list of UUIDEntry objects, in order of appearance in file.
+        entries: Ordered tuple of UUIDEntry objects, in order of appearance in file.
         source_file_type: The file type ('pcb', 'footprint', 'schematic', 'symbol_lib').
     """
 
-    entries: list[UUIDEntry] = field(default_factory=list)
+    entries: tuple[UUIDEntry, ...] = ()
     source_file_type: str = ""
 
 
@@ -123,30 +127,43 @@ def _determine_parent_type(
     return best_type, best_pos
 
 
-def _count_parent_index(
-    content: str, parent_type: str, parent_pos: int
-) -> int:
-    """Count how many occurrences of the parent_type appear before parent_pos.
+def _build_parent_count_map(content: str) -> dict[str, int]:
+    """Pre-compute running counts of each parent type in a single pass.
 
-    This gives the sequential index of the parent within the file.
+    Returns a dict mapping "parent_type:position" to the count at that position.
+    This avoids O(n) per-UUID lookups in _count_parent_index.
 
     Args:
         content: The full file content.
-        parent_type: The type string to count.
+
+    Returns:
+        Dict mapping (parent_type, position) to the sequential count.
+    """
+    counts: dict[str, int] = {}
+    running: dict[str, int] = {}
+
+    for type_name, pattern in _PARENT_TYPE_PATTERNS:
+        for match in pattern.finditer(content):
+            running[type_name] = running.get(type_name, 0) + 1
+            counts[(type_name, match.start())] = running[type_name] - 1
+
+    return counts
+
+
+def _count_parent_index(
+    parent_counts: dict[str, int], parent_type: str, parent_pos: int
+) -> int:
+    """Look up the pre-computed sequential index for a parent type.
+
+    Args:
+        parent_counts: Pre-computed count map from _build_parent_count_map.
+        parent_type: The type string to look up.
         parent_pos: Position of the current parent.
 
     Returns:
         0-based index of this parent occurrence.
     """
-    # Find the pattern for this parent type
-    for type_name, pattern in _PARENT_TYPE_PATTERNS:
-        if type_name == parent_type:
-            count = 0
-            for match in pattern.finditer(content[:parent_pos]):
-                count += 1
-            return count
-
-    return 0
+    return parent_counts.get((parent_type, parent_pos), 0)
 
 
 def extract_uuids(content: str, file_type: str) -> UUIDMap:
@@ -162,31 +179,44 @@ def extract_uuids(content: str, file_type: str) -> UUIDMap:
 
     Returns:
         UUIDMap with all entries in order of appearance.
+
+    Raises:
+        ValueError: If file_type is not a recognized type.
     """
+    if file_type not in _VALID_FILE_TYPES:
+        raise ValueError(
+            f"Invalid file_type: {file_type!r}. "
+            f"Must be one of {sorted(_VALID_FILE_TYPES)}."
+        )
+
     entries: list[UUIDEntry] = []
 
-    # Count line numbers efficiently
-    line_starts: list[int] = [0]
-    for i, ch in enumerate(content):
-        if ch == "\n":
-            line_starts.append(i + 1)
+    # Pre-compute parent index counts in a single pass
+    parent_counts = _build_parent_count_map(content)
+
+    # Track line number incrementally since UUID matches appear in file order
+    last_newline_pos = 0
+    current_line = 1
 
     def _line_number(pos: int) -> int:
-        """Binary search for line number from character position."""
-        lo, hi = 0, len(line_starts) - 1
-        while lo <= hi:
-            mid = (lo + hi) // 2
-            if line_starts[mid] <= pos:
-                lo = mid + 1
-            else:
-                hi = mid - 1
-        return hi + 1  # 1-based line number
+        """Compute line number by scanning forward from last scanned position."""
+        nonlocal last_newline_pos, current_line
+        # Scan from where we left off up to the target position
+        scan_start = last_newline_pos
+        while scan_start < pos:
+            idx = content.find("\n", scan_start, pos)
+            if idx == -1:
+                break
+            current_line += 1
+            scan_start = idx + 1
+        last_newline_pos = scan_start
+        return current_line
 
     for match in _UUID_PATTERN.finditer(content):
         uuid_value = match.group(1)
         line_num = _line_number(match.start())
         parent_type, parent_pos = _determine_parent_type(content, match.start())
-        parent_index = _count_parent_index(content, parent_type, parent_pos)
+        parent_index = _count_parent_index(parent_counts, parent_type, parent_pos)
 
         entries.append(
             UUIDEntry(
@@ -197,7 +227,7 @@ def extract_uuids(content: str, file_type: str) -> UUIDMap:
             )
         )
 
-    return UUIDMap(entries=entries, source_file_type=file_type)
+    return UUIDMap(entries=tuple(entries), source_file_type=file_type)
 
 
 def extract_uuids_from_file(path: Path, file_type: str) -> UUIDMap:
@@ -212,8 +242,14 @@ def extract_uuids_from_file(path: Path, file_type: str) -> UUIDMap:
 
     Raises:
         FileNotFoundError: If the file does not exist.
-        ValueError: If the file exceeds the 50MB size limit.
+        ValueError: If the file exceeds the 50MB size limit or file_type is invalid.
     """
+    if file_type not in _VALID_FILE_TYPES:
+        raise ValueError(
+            f"Invalid file_type: {file_type!r}. "
+            f"Must be one of {sorted(_VALID_FILE_TYPES)}."
+        )
+
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 

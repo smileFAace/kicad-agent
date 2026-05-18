@@ -35,6 +35,11 @@ def serialize_pcb(
     Returns:
         The output path (same as input output_path).
     """
+    if parse_result.file_type != "pcb":
+        raise ValueError(
+            f"Expected file_type='pcb', got file_type={parse_result.file_type!r}"
+        )
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     parse_result.kiutils_obj.to_file(str(output_path))
 
