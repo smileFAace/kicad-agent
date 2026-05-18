@@ -9,10 +9,10 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Foundation
 
-- [ ] **FND-01**: Parse .kicad_sch files into structured AST with full property coverage
-- [ ] **FND-02**: Parse .kicad_pcb files into structured AST with full property coverage
-- [ ] **FND-03**: Parse .kicad_sym (symbol library) files into structured AST
-- [ ] **FND-04**: Parse .kicad_mod (footprint library) files into structured AST
+- [x] **FND-01**: Parse .kicad_sch files into structured AST with full property coverage
+- [x] **FND-02**: Parse .kicad_pcb files into structured AST with full property coverage
+- [x] **FND-03**: Parse .kicad_sym (symbol library) files into structured AST
+- [x] **FND-04**: Parse .kicad_mod (footprint library) files into structured AST
 - [ ] **FND-05**: Round-trip fidelity: parse -> serialize produces byte-identical or semantically equivalent output for all file types
 - [ ] **FND-06**: UUID integrity preservation across all operations (no dangling references)
 - [ ] **FND-07**: Transaction-based mutation with rollback capability
@@ -120,10 +120,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| FND-01 | Phase 1: Foundation | Pending |
-| FND-02 | Phase 1: Foundation | Pending |
-| FND-03 | Phase 1: Foundation | Pending |
-| FND-04 | Phase 1: Foundation | Pending |
+| FND-01 | Phase 1: Foundation | Complete |
+| FND-02 | Phase 1: Foundation | Complete |
+| FND-03 | Phase 1: Foundation | Complete |
+| FND-04 | Phase 1: Foundation | Complete |
 | FND-05 | Phase 1: Foundation | Pending |
 | FND-06 | Phase 1: Foundation | Pending |
 | VAL-07 | Phase 1: Foundation | Pending |
@@ -173,4 +173,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-05-17*
-*Last updated: 2026-05-17 after roadmap creation*
+*Last updated: 2026-05-18 after 01-01 plan completion*

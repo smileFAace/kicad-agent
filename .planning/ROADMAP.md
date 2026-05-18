@@ -36,7 +36,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 3 plans
 
 Plans:
-- [ ] 01-01-PLAN.md -- Parser layer for all 4 KiCad file types with raw content preservation
+- [x] 01-01-PLAN.md -- Parser layer for all 4 KiCad file types with raw content preservation
 - [ ] 01-02-PLAN.md -- UUID extraction/re-injection, serializers, and round-trip stability validator
 - [ ] 01-03-PLAN.md -- Comprehensive round-trip fidelity regression test suite with fixture files
 
@@ -153,7 +153,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation -- Parse, Serialize, Round-trip | 0/3 | Planned | - |
+| 1. Foundation -- Parse, Serialize, Round-trip | 1/3 | In Progress | - |
 | 2. Operation Schema and IR Layer | 0/3 | Not started | - |
 | 3. Validation Pipeline | 0/3 | Not started | - |
 | 4. Component Operations | 0/3 | Not started | - |
