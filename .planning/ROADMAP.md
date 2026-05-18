@@ -50,12 +50,12 @@ Plans:
   3. The mutated IR serializes to a deterministic, SCM-friendly output (stable ordering across runs)
   4. A failed mutation rolls back to the pre-mutation state (transaction with rollback)
   5. The JSON Schema is exportable for LLM consumption (Claude can discover available operations)
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 02-01: Pydantic operation schema for all edit intents
-- [ ] 02-02: IR dataclasses and bidirectional kiutils-to-IR mapping
-- [ ] 02-03: Transaction-based mutation engine with rollback and deterministic serialization
+- [ ] 02-01-PLAN.md -- Pydantic operation schema with discriminated union and JSON Schema export (OPS-01, OPS-02)
+- [ ] 02-02-PLAN.md -- IR base class and four file-type IR wrappers with mutation tracking (OPS-03)
+- [ ] 02-03-PLAN.md -- Transaction engine with rollback and KiCad output normalizer (FND-07, FND-08)
 
 ### Phase 3: Validation Pipeline
 **Goal**: Every mutation passes through ERC, DRC, and structural validation gates before being committed to disk
@@ -154,7 +154,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation -- Parse, Serialize, Round-trip | 3/3 | Complete | 2026-05-18 |
-| 2. Operation Schema and IR Layer | 0/3 | Not started | - |
+| 2. Operation Schema and IR Layer | 0/3 | Planning complete | - |
 | 3. Validation Pipeline | 0/3 | Not started | - |
 | 4. Component Operations | 0/3 | Not started | - |
 | 5. Net, Reference, and Footprint Operations | 0/4 | Not started | - |
