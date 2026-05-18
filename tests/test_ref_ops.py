@@ -31,9 +31,6 @@ def _make_renumber_refs_op(**overrides) -> Operation:
     data = {
         "op_type": "renumber_refs",
         "target_file": "schematic.kicad_sch",
-        "prefix": "R",
-        "start_index": 1,
-        "step": 1,
     }
     data.update(overrides)
     return Operation.model_validate({"root": data})
@@ -168,12 +165,13 @@ class TestSchematicIRGetAllReferences:
             assert len(ref) > 0
 
     def test_get_all_references_includes_known_components(self) -> None:
-        """Arduino_Mega fixture has J1, J2, J3, J4, U1, U2, Y1, P1 references."""
+        """Arduino_Mega fixture has J1-J7 and #PWR01-#PWR07 references."""
         refs = self.ir.get_all_references()
         ref_strs = [r for r, _ in refs]
-        # Arduino_Mega has these known references
+        # Arduino_Mega has J1 through J7 and power symbols
         assert "J1" in ref_strs
-        assert "U1" in ref_strs
+        assert "J7" in ref_strs
+        assert "#PWR01" in ref_strs
 
 
 class TestSchematicIRRenumberReferences:
@@ -188,34 +186,44 @@ class TestSchematicIRRenumberReferences:
 
     def test_renumber_with_prefix(self) -> None:
         """Test 11: renumber_references with prefix='J' renumbers only J-prefixed refs."""
+        # First, scramble a J reference to test renumbering
+        comp = self.ir.get_component_by_ref("J7")
+        assert comp is not None
+        self.ir._set_component_reference(comp, "J99")
+
         changes = self.ir.renumber_references(prefix="J", start_index=1, step=1)
-        # Should have changes for J components
-        j_refs_before = [r for r, _ in self.ir.get_all_references() if r.startswith("J")]
+        # Should have changes since J99 was out of sequence
+        assert len(changes) > 0
+
         # After renumber, all J refs should be sequential from J1
         refs_after = self.ir.get_all_references()
-        j_refs_after = sorted([r for r, _ in refs_after if r.startswith("J")])
-        # All should be J1, J2, J3, J4
-        expected = ["J1", "J2", "J3", "J4"]
+        j_refs_after = sorted(
+            [r for r, _ in refs_after if r.startswith("J") and not r.endswith("?")],
+            key=lambda x: int(x[1:])
+        )
+        # Arduino_Mega has 7 J components (J1-J7)
+        expected = ["J1", "J2", "J3", "J4", "J5", "J6", "J7"]
         assert j_refs_after == expected
 
     def test_renumber_all_prefixes(self) -> None:
         """Test 12: renumber_references with prefix='' renumbers ALL components grouped by prefix."""
+        # Scramble some references to force changes
+        comp_j = self.ir.get_component_by_ref("J5")
+        assert comp_j is not None
+        self.ir._set_component_reference(comp_j, "J88")
+
         changes = self.ir.renumber_references(prefix="", start_index=1, step=1)
+        # Should have changes since J88 was out of sequence
         assert len(changes) > 0
+
         # After renumber, check that all references are sequential per prefix
         refs_after = self.ir.get_all_references()
         prefix_groups: dict[str, list[int]] = {}
+        import re as _re
         for ref, _ in refs_after:
-            # Parse prefix and number
-            prefix = ""
-            num_str = ""
-            for ch in ref:
-                if ch.isalpha():
-                    prefix += ch
-                else:
-                    num_str += ch
-            if prefix and num_str.isdigit():
-                prefix_groups.setdefault(prefix, []).append(int(num_str))
+            m = _re.match(r"^([#A-Za-z]+)(\d+)$", ref)
+            if m:
+                prefix_groups.setdefault(m.group(1), []).append(int(m.group(2)))
 
         for prefix, nums in prefix_groups.items():
             assert sorted(nums) == list(range(1, len(nums) + 1)), (
@@ -224,6 +232,11 @@ class TestSchematicIRRenumberReferences:
 
     def test_renumber_records_mutation(self) -> None:
         """Test 13: renumber_references records mutation log entry for each renumbered component."""
+        # Scramble to force a change
+        comp = self.ir.get_component_by_ref("J3")
+        assert comp is not None
+        self.ir._set_component_reference(comp, "J50")
+
         self.ir.renumber_references(prefix="J", start_index=1, step=1)
         mutations = [m for m in self.ir.mutation_log if m["description"] == "renumber_reference"]
         assert len(mutations) > 0
@@ -231,6 +244,11 @@ class TestSchematicIRRenumberReferences:
     def test_renumber_sets_dirty(self) -> None:
         """Test 14: renumber_references sets dirty flag on SchematicIR."""
         assert not self.ir.dirty
+        # Scramble to force a change
+        comp = self.ir.get_component_by_ref("J2")
+        assert comp is not None
+        self.ir._set_component_reference(comp, "J99")
+
         self.ir.renumber_references(prefix="J", start_index=1, step=1)
         assert self.ir.dirty
 
