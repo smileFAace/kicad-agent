@@ -145,6 +145,6 @@ def reinject_uuids(serialized_content: str, uuid_map: UUIDMap) -> str:
     # Apply insertions in reverse order to preserve positions
     result = serialized_content
     for pos, uuid_line in sorted(insertions, key=lambda x: x[0], reverse=True):
-        result = result[:pos] + "\n" + uuid_line + result[pos:]
+        result = result[:pos] + uuid_line + result[pos:]
 
     return result
