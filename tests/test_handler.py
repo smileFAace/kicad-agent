@@ -133,17 +133,19 @@ def test_validate_path_traversal():
 
 
 def test_handle_operation_valid():
+    """handle_operation with a valid operation on a real file returns OperationResult."""
+    import pathlib
+    fixture = pathlib.Path("tests/fixtures/Arduino_Mega/Arduino_Mega.kicad_sch")
     json_str = json.dumps({
-        "op_type": "add_component",
-        "target_file": "test.kicad_sch",
-        "library_id": "Device:R_Small_US",
+        "op_type": "move_component",
+        "target_file": str(fixture),
+        "reference": "J1",
         "position": {"x": 50.0, "y": 30.0},
     })
     result = handle_operation(json_str)
     assert isinstance(result, OperationResult)
     assert result.success is True
-    assert result.operation_type == "add_component"
-    assert result.target_file == "test.kicad_sch"
+    assert result.operation_type == "move_component"
 
 
 # ---------------------------------------------------------------------------

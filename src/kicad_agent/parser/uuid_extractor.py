@@ -19,9 +19,10 @@ from pathlib import Path
 
 
 # UUID v4 format: 8-4-4-4-12 hex digits separated by hyphens
-# KiCad 7+ always uses quoted UUIDs
+# KiCad PCBs/footprints use quoted UUIDs: (uuid "...")
+# KiCad schematics use unquoted UUIDs: (uuid ...)
 _UUID_PATTERN = re.compile(
-    r'\(uuid\s+"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"\)',
+    r'\(uuid\s+"?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"?\)',
     re.IGNORECASE,
 )
 

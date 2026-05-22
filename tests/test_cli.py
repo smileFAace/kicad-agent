@@ -16,7 +16,7 @@ import pytest
 
 VALID_ADD = json.dumps({
     "op_type": "add_component",
-    "target_file": "test.kicad_sch",
+    "target_file": "tests/fixtures/Arduino_Mega/Arduino_Mega.kicad_sch",
     "library_id": "Device:R_Small_US",
     "position": {"x": 50.0, "y": 30.0},
 })
@@ -32,8 +32,8 @@ PATH_TRAVERSAL = json.dumps({
 
 VALID_MOVE = json.dumps({
     "op_type": "move_component",
-    "target_file": "test.kicad_sch",
-    "reference": "R1",
+    "target_file": "tests/fixtures/Arduino_Mega/Arduino_Mega.kicad_sch",
+    "reference": "J1",
     "position": {"x": 100.0, "y": 200.0},
 })
 

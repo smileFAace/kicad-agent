@@ -401,7 +401,7 @@ class TestValidateUuidUniqueness:
         import re
 
         uuid_pattern = re.compile(
-            r'\(uuid\s+"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"\)',
+            r'\(uuid\s+"?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"?\)',
             re.IGNORECASE,
         )
         match = uuid_pattern.search(original_content)
