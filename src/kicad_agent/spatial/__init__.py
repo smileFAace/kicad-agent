@@ -4,6 +4,7 @@ VP-01, VP-02, VP-03: Spatial primitive types, extraction pipeline, and rendering
 VP-04: Procedural maze-routing PCB generator.
 VP-05: Cold-start reasoning chain synthesis from DRC/ERC violations.
 VP-06: Spatial query engine with Shapely STRtree.
+VP-08: Rick agent integration for coordinate-grounded domain reports.
 
 Provides:
     - SpatialPoint, SpatialBox, SpatialPath, SpatialRegion: frozen dataclasses
@@ -14,6 +15,8 @@ Provides:
     - generate_maze_board: Procedural maze-routing PCB puzzle generator
     - synthesize_chain, synthesize_chains: Reasoning chain synthesis from violations
     - SpatialQueryEngine: Shapely STRtree spatial query engine
+    - RickDomain, RickFinding, SpatialRickReport: Rick integration types
+    - generate_spatial_report, generate_all_reports: Rick report generation
 """
 
 from kicad_agent.spatial.extractor import (
@@ -41,6 +44,13 @@ from kicad_agent.spatial.renderer import (
     render_pcb_layer,
     render_pcb_layer_grid,
 )
+from kicad_agent.spatial.rick_integration import (
+    RickDomain,
+    RickFinding,
+    SpatialRickReport,
+    generate_all_reports,
+    generate_spatial_report,
+)
 
 __all__ = [
     "SpatialPoint",
@@ -61,4 +71,9 @@ __all__ = [
     "synthesize_chain",
     "synthesize_chains",
     "SpatialQueryEngine",
+    "RickDomain",
+    "RickFinding",
+    "SpatialRickReport",
+    "generate_spatial_report",
+    "generate_all_reports",
 ]
