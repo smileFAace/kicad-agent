@@ -113,6 +113,18 @@ Inspired by DeepSeek's "Thinking with Visual Primitives" — interleave spatial 
 - [x] **VP-07**: AI review pipeline that outputs spatially-grounded DRC findings: "The via at <point> [45.2, 22.1] is 0.15mm from the trace <path> [...] — violates minimum clearance"
 - [x] **VP-08**: Integration with existing Rick agents (SI Rick, PI Rick, EMC Rick, DFM Rick) to produce coordinate-grounded reports instead of text-only findings
 
+### GRPO Spatial Reasoning Training (Phase 9)
+
+DeepSeek-style RL training pipeline with coordinate-grounded reward signals on synthetic PCB maze data. Trains a reward model to score reasoning chains, then uses GRPO to optimize a policy for PCB spatial reasoning.
+
+- [ ] **GRPO-01**: Synthetic data pipeline generating 100k+ maze-routing samples from the Phase 8 maze generator, with verified solutions and difficulty grading (easy/medium/hard/adversarial)
+- [ ] **GRPO-02**: Cold-start reasoning chain synthesis at scale — DFS exploration traces, verified chains with coordinate grounding, difficulty-graded samples from maze solutions
+- [ ] **GRPO-03**: Reward model architecture with per-step dense rewards (format correctness, reasoning quality, coordinate accuracy), multi-stage reward signals, and smooth penalty functions
+- [ ] **GRPO-04**: GRPO training loop — policy generates chains, reward model scores them, policy updates via group-relative optimization
+- [ ] **GRPO-05**: Reward hacking prevention — smooth penalty functions, multi-stage reward architecture, anomaly detection on reward distributions
+- [ ] **GRPO-06**: Evaluation harness — held-out maze-routing tasks, baseline comparison, measurable improvement metrics, ablation studies
+- [ ] **GRPO-07**: Reproducible training pipeline — single-command execution, configurable hyperparameters, deterministic seeding, training checkpoints
+
 ## Out of Scope
 
 | Feature | Reason |
@@ -186,12 +198,19 @@ Which phases cover which requirements. Updated during roadmap creation.
 | VP-06 | Phase 8: Visual Primitives | Complete | 08-03 |
 | VP-07 | Phase 8: Visual Primitives | Complete | 08-03 |
 | VP-08 | Phase 8: Visual Primitives | Complete | 08-04 |
+| GRPO-01 | Phase 9: GRPO Spatial Reasoning Training | Pending | 09-01 |
+| GRPO-02 | Phase 9: GRPO Spatial Reasoning Training | Pending | 09-02 |
+| GRPO-03 | Phase 9: GRPO Spatial Reasoning Training | Pending | 09-03 |
+| GRPO-04 | Phase 9: GRPO Spatial Reasoning Training | Pending | 09-04 |
+| GRPO-05 | Phase 9: GRPO Spatial Reasoning Training | Pending | 09-03 |
+| GRPO-06 | Phase 9: GRPO Spatial Reasoning Training | Pending | 09-04 |
+| GRPO-07 | Phase 9: GRPO Spatial Reasoning Training | Pending | 09-04 |
 
 **Coverage:**
-- Total requirements: 52 (44 v1 + 8 Phase 8)
-- Mapped to phases: 52
+- Total requirements: 59 (44 v1 + 8 Phase 8 + 7 Phase 9)
+- Mapped to phases: 59
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-05-17*
-*Last updated: 2026-05-22 — Phase 8 Visual Primitives added*
+*Last updated: 2026-05-22 — Phase 9 GRPO Spatial Reasoning Training added*
