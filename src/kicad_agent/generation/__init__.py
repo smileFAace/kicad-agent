@@ -2,14 +2,15 @@
 
 Provides the GenerationIntent schema for converting high-level design parameters
 into structured operation sequences, plus template generators for creating valid
-KiCad board and schematic files from scratch.
+KiCad board and schematic files from scratch, an end-to-end generation pipeline,
+iterative refinement loop, and evaluation harness.
 
 Usage::
 
-    from kicad_agent.generation import GenerationIntent, generate_board, generate_schematic
+    from kicad_agent.generation import GenerationIntent, generate_design, generate_board
 
     intent = GenerationIntent(name="Motor Driver", board=BoardSpec(width_mm=100, height_mm=80))
-    ops = intent_to_operations(intent)
+    result = generate_design(intent, Path("/output"))
 """
 
 from kicad_agent.generation.intent import (
@@ -60,13 +61,45 @@ def __getattr__(name: str):
             "PlanStep": PlanStep,
             "plan_operation_sequence": plan_operation_sequence,
         }[name]
+    if name in ("generate_design", "GenerationResult"):
+        from kicad_agent.generation.pipeline import GenerationResult, generate_design
+
+        return GenerationResult if name == "GenerationResult" else generate_design
+    if name in ("refine_design", "RefinementResult", "RefinementIteration"):
+        from kicad_agent.generation.refinement import (
+            RefinementIteration,
+            RefinementResult,
+            refine_design,
+        )
+
+        return {
+            "refine_design": refine_design,
+            "RefinementResult": RefinementResult,
+            "RefinementIteration": RefinementIteration,
+        }[name]
+    if name in ("evaluate_design", "EvaluationResult", "evaluate_intent_suite", "get_test_intents"):
+        from kicad_agent.generation.evaluation import (
+            EvaluationResult,
+            evaluate_design,
+            evaluate_intent_suite,
+            get_test_intents,
+        )
+
+        return {
+            "evaluate_design": evaluate_design,
+            "EvaluationResult": EvaluationResult,
+            "evaluate_intent_suite": evaluate_intent_suite,
+            "get_test_intents": get_test_intents,
+        }[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
     "BoardSpec",
     "BoardTemplate",
     "ComponentSpec",
+    "EvaluationResult",
     "GenerationIntent",
+    "GenerationResult",
     "NetSpec",
     "OpPlanner",
     "PlacementEngine",
@@ -74,10 +107,17 @@ __all__ = [
     "PlanStep",
     "PowerSpec",
     "PositionSpec",
+    "RefinementIteration",
+    "RefinementResult",
     "SchematicTemplate",
+    "evaluate_design",
+    "evaluate_intent_suite",
     "generate_board",
+    "generate_design",
     "generate_schematic",
+    "get_test_intents",
     "intent_to_operations",
     "plan_operation_sequence",
+    "refine_design",
     "validate_placement_clearance",
 ]
