@@ -18,7 +18,7 @@ import statistics
 from dataclasses import dataclass
 from typing import Any
 
-from kicad_agent.training.chains import synthesize_maze_chain
+from kicad_agent.training.chains import synthesize_maze_chain, synthesize_corrupted_chain
 from kicad_agent.training.dataset import MazeDataset, MazeSample
 from kicad_agent.training.reward import score_chain
 
@@ -36,6 +36,8 @@ class EvalResult:
         chain_length_mean: Mean chain length.
         chain_length_std: Standard deviation of chain lengths.
         pass_rate: Fraction of chains that reach correct solution.
+        discrimination_gap: Model's avg score gap (correct - corrupted).
+            Higher = model better at distinguishing correct from corrupted.
     """
 
     model_name: str
@@ -46,6 +48,7 @@ class EvalResult:
     chain_length_mean: float
     chain_length_std: float
     pass_rate: float
+    discrimination_gap: float = 0.0
 
 
 class EvaluationHarness:
@@ -94,6 +97,7 @@ class EvaluationHarness:
                 chain_length_mean=0.0,
                 chain_length_std=0.0,
                 pass_rate=0.0,
+                discrimination_gap=0.0,
             )
 
         rewards: list[float] = []
@@ -104,8 +108,11 @@ class EvaluationHarness:
         correct_coord_refs = 0
 
         for sample in samples:
-            # Generate chain (rule-based or model-based)
-            chain = synthesize_maze_chain(sample)
+            # Generate chain: model-based if available, else rule-based
+            if model is not None and hasattr(model, "generate"):
+                chain = model.generate(sample)
+            else:
+                chain = synthesize_maze_chain(sample)
 
             # Score chain
             chain_reward = score_chain(chain, sample)
@@ -131,6 +138,21 @@ class EvaluationHarness:
 
         coord_coverage = correct_coord_refs / max(total_coord_refs, 1)
 
+        # Measure discrimination: model's ability to score correct > corrupted
+        discrimination_gap = 0.0
+        if self.reward_model is not None and hasattr(self.reward_model, 'is_available') and self.reward_model.is_available:
+            from kicad_agent.training.reward_model import predict_reward
+            gaps: list[float] = []
+            for sample in samples[:50]:  # subsample for speed
+                correct = synthesize_maze_chain(sample)
+                pred_c = predict_reward(self.reward_model, correct.chain_text)
+                correct_score = (pred_c.format_score + pred_c.quality_score + pred_c.accuracy_score) / 3.0
+                corrupted = synthesize_corrupted_chain(sample, "wrong_coords", rng_seed=sample.seed)
+                pred_x = predict_reward(self.reward_model, corrupted.chain_text)
+                corrupted_score = (pred_x.format_score + pred_x.quality_score + pred_x.accuracy_score) / 3.0
+                gaps.append(correct_score - corrupted_score)
+            discrimination_gap = sum(gaps) / len(gaps) if gaps else 0.0
+
         return EvalResult(
             model_name=model.__class__.__name__ if model else "rule_based",
             n_samples=len(samples),
@@ -140,6 +162,7 @@ class EvaluationHarness:
             chain_length_mean=statistics.mean(chain_lengths) if chain_lengths else 0.0,
             chain_length_std=statistics.stdev(chain_lengths) if len(chain_lengths) > 1 else 0.0,
             pass_rate=correct_count / len(samples) if samples else 0.0,
+            discrimination_gap=discrimination_gap,
         )
 
     def compare(self, model_before: Any, model_after: Any) -> dict:

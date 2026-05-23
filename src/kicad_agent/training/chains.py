@@ -216,6 +216,233 @@ def synthesize_exploration_chain(
     )
 
 
+def synthesize_corrupted_chain(
+    sample: MazeSample,
+    corruption_type: str = "random",
+    rng_seed: int | None = None,
+) -> MazeReasoningChain:
+    """Build an intentionally imperfect chain for GRPO contrast.
+
+    Corruption strategies create bad chains so the group-relative advantage
+    can differentiate good from bad reasoning within each GRPO group.
+
+    Args:
+        sample: MazeSample with verified solution.
+        corruption_type: One of "wrong_coords", "missing_steps",
+            "wrong_order", "vague_reasoning", "random".
+        rng_seed: Optional seed for deterministic corruption.
+
+    Returns:
+        MazeReasoningChain with introduced errors.
+    """
+    import random
+
+    rng = random.Random(rng_seed)
+
+    # Pick random corruption if requested
+    if corruption_type == "random":
+        corruption_type = rng.choice([
+            "wrong_coords", "missing_steps", "wrong_order", "vague_reasoning",
+        ])
+
+    # Start from a correct chain and corrupt it
+    src = sample.source_point
+    tgt = sample.target_point
+    obstacles = sample.obstacle_positions
+    path = list(sample.solution_path)
+
+    if corruption_type == "wrong_coords":
+        return _corrupt_wrong_coords(sample, src, tgt, obstacles, path, rng)
+    elif corruption_type == "missing_steps":
+        return _corrupt_missing_steps(sample, src, tgt, obstacles, path, rng)
+    elif corruption_type == "wrong_order":
+        return _corrupt_wrong_order(sample, src, tgt, obstacles, path, rng)
+    elif corruption_type == "vague_reasoning":
+        return _corrupt_vague_reasoning(sample, src, tgt, obstacles, path, rng)
+    else:
+        # Fallback: wrong coords
+        return _corrupt_wrong_coords(sample, src, tgt, obstacles, path, rng)
+
+
+def _corrupt_wrong_coords(
+    sample: MazeSample,
+    src: tuple[float, float],
+    tgt: tuple[float, float],
+    obstacles: tuple[tuple[float, float], ...],
+    path: list[tuple[float, float]],
+    rng,
+) -> MazeReasoningChain:
+    """Shift coordinates off the correct path by random offsets."""
+    # Corrupt path: shift each point by random offset
+    corrupted_path = []
+    for px, py in path:
+        dx = rng.uniform(3.0, 8.0) * rng.choice([-1, 1])
+        dy = rng.uniform(3.0, 8.0) * rng.choice([-1, 1])
+        cx = max(0, min(sample.board_width_mm, px + dx))
+        cy = max(0, min(sample.board_height_mm, py + dy))
+        corrupted_path.append((round(cx, 1), round(cy, 1)))
+
+    obs_text = (
+        f"Board is {sample.board_width_mm:.0f}x{sample.board_height_mm:.0f}mm "
+        f"with {sample.obstacle_count} obstacles. "
+        f"Source via at {_point_str(src[0], src[1])}, "
+        f"target via at {_point_str(tgt[0], tgt[1])}."
+    )
+    spatial_text = (
+        f"The path from source to target must navigate around "
+        f"{sample.obstacle_count} obstacles."
+    )
+    path_strs = [_point_str(p[0], p[1]) for p in corrupted_path]
+    coord_text = f"Solution path: {' → '.join(path_strs)} ({len(corrupted_path)} steps)."
+    diagnosis_text = (
+        f"The optimal route requires {len(corrupted_path)} steps "
+        f"across the board."
+    )
+    rec_text = (
+        f"Route trace from source {_point_str(src[0], src[1])} "
+        f"to target {_point_str(tgt[0], tgt[1])}."
+    )
+
+    chain_text = f"{obs_text}\n{spatial_text}\n{coord_text}\n{diagnosis_text}\n{rec_text}"
+    all_coords = [src, tgt] + corrupted_path
+
+    steps = (
+        {"step_type": "observation", "text": obs_text, "coordinates": [src, tgt]},
+        {"step_type": "spatial_context", "text": spatial_text, "coordinates": []},
+        {"step_type": "coordinate_reference", "text": coord_text, "coordinates": corrupted_path},
+        {"step_type": "diagnosis", "text": diagnosis_text, "coordinates": []},
+        {"step_type": "recommendation", "text": rec_text, "coordinates": [src, tgt]},
+    )
+
+    return MazeReasoningChain(
+        sample_id=sample.sample_id,
+        difficulty=sample.difficulty,
+        chain_text=chain_text,
+        steps=steps,
+        coordinates_referenced=tuple(all_coords),
+        is_correct=False,
+        exploration_branches=0,
+    )
+
+
+def _corrupt_missing_steps(
+    sample: MazeSample,
+    src: tuple[float, float],
+    tgt: tuple[float, float],
+    obstacles: tuple[tuple[float, float], ...],
+    path: list[tuple[float, float]],
+    rng,
+) -> MazeReasoningChain:
+    """Remove critical steps (coordinate_reference or diagnosis)."""
+    obs_text = (
+        f"Board is {sample.board_width_mm:.0f}x{sample.board_height_mm:.0f}mm "
+        f"with {sample.obstacle_count} obstacles. "
+        f"Source via at {_point_str(src[0], src[1])}, "
+        f"target via at {_point_str(tgt[0], tgt[1])}."
+    )
+    rec_text = (
+        f"Route trace from source {_point_str(src[0], src[1])} "
+        f"to target {_point_str(tgt[0], tgt[1])}."
+    )
+
+    # Only keep 2-3 of the 5 steps
+    steps = [
+        {"step_type": "observation", "text": obs_text, "coordinates": [src, tgt]},
+        {"step_type": "recommendation", "text": rec_text, "coordinates": [src, tgt]},
+    ]
+    chain_text = f"{obs_text}\n{rec_text}"
+    all_coords = [src, tgt]
+
+    return MazeReasoningChain(
+        sample_id=sample.sample_id,
+        difficulty=sample.difficulty,
+        chain_text=chain_text,
+        steps=tuple(steps),
+        coordinates_referenced=tuple(all_coords),
+        is_correct=False,
+        exploration_branches=0,
+    )
+
+
+def _corrupt_wrong_order(
+    sample: MazeSample,
+    src: tuple[float, float],
+    tgt: tuple[float, float],
+    obstacles: tuple[tuple[float, float], ...],
+    path: list[tuple[float, float]],
+    rng,
+) -> MazeReasoningChain:
+    """Scramble step order (recommendation before observation)."""
+    obs_text = (
+        f"Board is {sample.board_width_mm:.0f}x{sample.board_height_mm:.0f}mm "
+        f"with {sample.obstacle_count} obstacles. "
+        f"Source via at {_point_str(src[0], src[1])}, "
+        f"target via at {_point_str(tgt[0], tgt[1])}."
+    )
+    path_strs = [_point_str(p[0], p[1]) for p in path]
+    coord_text = f"Solution path: {' → '.join(path_strs)} ({len(path)} steps)."
+    rec_text = (
+        f"Route trace from source {_point_str(src[0], src[1])} "
+        f"to target {_point_str(tgt[0], tgt[1])} in {len(path)} steps."
+    )
+
+    # Wrong order: recommendation, coords, observation
+    chain_text = f"{rec_text}\n{coord_text}\n{obs_text}"
+    all_coords = [src, tgt] + list(path)
+
+    steps = (
+        {"step_type": "recommendation", "text": rec_text, "coordinates": [src, tgt]},
+        {"step_type": "coordinate_reference", "text": coord_text, "coordinates": list(path)},
+        {"step_type": "observation", "text": obs_text, "coordinates": [src, tgt]},
+    )
+
+    return MazeReasoningChain(
+        sample_id=sample.sample_id,
+        difficulty=sample.difficulty,
+        chain_text=chain_text,
+        steps=steps,
+        coordinates_referenced=tuple(all_coords),
+        is_correct=False,
+        exploration_branches=0,
+    )
+
+
+def _corrupt_vague_reasoning(
+    sample: MazeSample,
+    src: tuple[float, float],
+    tgt: tuple[float, float],
+    obstacles: tuple[tuple[float, float], ...],
+    path: list[tuple[float, float]],
+    rng,
+) -> MazeReasoningChain:
+    """Replace specific coordinates with vague references."""
+    obs_text = "There is a board with some obstacles to route around."
+    spatial_text = "The source and target are somewhere on the board."
+    coord_text = "Follow the path from start to end."
+    diagnosis_text = "The route goes around obstacles."
+    rec_text = "Connect the two points."
+
+    chain_text = f"{obs_text}\n{spatial_text}\n{coord_text}\n{diagnosis_text}\n{rec_text}"
+
+    steps = (
+        {"step_type": "observation", "text": obs_text, "coordinates": []},
+        {"step_type": "spatial_context", "text": spatial_text, "coordinates": []},
+        {"step_type": "coordinate_reference", "text": coord_text, "coordinates": []},
+        {"step_type": "diagnosis", "text": diagnosis_text, "coordinates": []},
+        {"step_type": "recommendation", "text": rec_text, "coordinates": []},
+    )
+
+    return MazeReasoningChain(
+        sample_id=sample.sample_id,
+        difficulty=sample.difficulty,
+        chain_text=chain_text,
+        steps=steps,
+        coordinates_referenced=(),
+        is_correct=False,
+        exploration_branches=0,
+    )
+
+
 def _reconstruct_grid(sample: MazeSample) -> list[list[bool]]:
     """Reconstruct a boolean grid from sample metadata.
 

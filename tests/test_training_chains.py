@@ -21,6 +21,7 @@ import pytest
 
 from kicad_agent.training.chains import (
     MazeReasoningChain,
+    synthesize_corrupted_chain,
     synthesize_exploration_chain,
     synthesize_maze_chain,
 )
@@ -311,3 +312,61 @@ class TestChainWriter:
             for line in f:
                 obj = json.loads(line.strip())
                 assert obj["is_correct"] is True
+
+
+# ======================================================================
+# TestCorruptedChains
+# ======================================================================
+
+
+class TestCorruptedChains:
+    """Corrupted chain generation for GRPO contrast."""
+
+    def test_wrong_coords_corruption(self, easy_sample: MazeSample) -> None:
+        """wrong_coords produces chain with shifted coordinates."""
+        chain = synthesize_corrupted_chain(easy_sample, "wrong_coords", rng_seed=42)
+        assert chain.is_correct is False
+        assert len(chain.steps) == 5
+        # Corrupted path should differ from solution path
+        assert chain.coordinates_referenced != easy_sample.solution_path
+
+    def test_missing_steps_corruption(self, easy_sample: MazeSample) -> None:
+        """missing_steps produces chain with fewer steps."""
+        chain = synthesize_corrupted_chain(easy_sample, "missing_steps", rng_seed=42)
+        assert chain.is_correct is False
+        assert len(chain.steps) < 5
+
+    def test_wrong_order_corruption(self, easy_sample: MazeSample) -> None:
+        """wrong_order produces chain with scrambled step order."""
+        chain = synthesize_corrupted_chain(easy_sample, "wrong_order", rng_seed=42)
+        assert chain.is_correct is False
+        step_types = [s["step_type"] for s in chain.steps]
+        # Recommendation should come before observation (wrong order)
+        rec_idx = step_types.index("recommendation")
+        obs_idx = step_types.index("observation")
+        assert rec_idx < obs_idx
+
+    def test_vague_reasoning_corruption(self, easy_sample: MazeSample) -> None:
+        """vague_reasoning produces chain with no specific coordinates."""
+        chain = synthesize_corrupted_chain(easy_sample, "vague_reasoning", rng_seed=42)
+        assert chain.is_correct is False
+        assert len(chain.coordinates_referenced) == 0
+        assert "<point" not in chain.chain_text
+
+    def test_random_corruption(self, easy_sample: MazeSample) -> None:
+        """random picks one of the corruption types."""
+        chain = synthesize_corrupted_chain(easy_sample, "random", rng_seed=42)
+        assert chain.is_correct is False
+        assert len(chain.steps) >= 2
+
+    def test_corrupted_chain_is_frozen(self, easy_sample: MazeSample) -> None:
+        """Corrupted chain is still frozen."""
+        chain = synthesize_corrupted_chain(easy_sample, "wrong_coords", rng_seed=42)
+        with pytest.raises(FrozenInstanceError):
+            chain.is_correct = True  # type: ignore[misc]
+
+    def test_deterministic_corruption(self, easy_sample: MazeSample) -> None:
+        """Same seed produces same corrupted chain."""
+        c1 = synthesize_corrupted_chain(easy_sample, "wrong_coords", rng_seed=99)
+        c2 = synthesize_corrupted_chain(easy_sample, "wrong_coords", rng_seed=99)
+        assert c1.chain_text == c2.chain_text

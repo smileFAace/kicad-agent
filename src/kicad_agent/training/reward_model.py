@@ -17,6 +17,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from kicad_agent.training.tokenizer import ChainTokenizer
+
 
 @dataclass(frozen=True)
 class PredictedReward:
@@ -70,8 +72,11 @@ def _simple_tokenize(text: str, max_len: int = _MAX_SEQ_LEN) -> tuple[list[int],
 # Reward Model
 # ---------------------------------------------------------------------------
 
-def _build_model():
+def _build_model(vocab_size: int = _MAX_VOCAB + 2):
     """Build and return the RewardModel nn.Module.
+
+    Args:
+        vocab_size: Vocabulary size for the embedding layer.
 
     Returns None if PyTorch is not available.
     """
@@ -93,7 +98,7 @@ def _build_model():
 
         def __init__(
             self,
-            vocab_size: int = _MAX_VOCAB + 2,
+            vocab_size: int = 8000,
             d_model: int = 256,
             n_heads: int = 4,
             n_layers: int = 4,
@@ -135,17 +140,17 @@ def _build_model():
             positions = torch.arange(seq_len, device=input_ids.device).unsqueeze(0).expand(batch_size, -1)
             x = self.embedding(input_ids) + self.pos_embedding(positions)
 
-            # Create padding mask for transformer
-            if attention_mask is not None:
-                # Convert to bool mask: True = ignore
-                padding_mask = attention_mask == 0
+            # Padding mask: skip on MPS (unsupported nested-tensor op), use on CUDA/CPU
+            device_type = input_ids.device.type
+            if attention_mask is not None and device_type not in ("mps",):
+                padding_mask = attention_mask == 0  # True = ignore
             else:
                 padding_mask = None
 
             # Encode
             x = self.encoder(x, src_key_padding_mask=padding_mask)
 
-            # Mean pooling (respecting mask)
+            # Mean pooling (respecting mask for accurate averaging)
             if attention_mask is not None:
                 mask_expanded = attention_mask.unsqueeze(-1).float()
                 x = (x * mask_expanded).sum(dim=1) / mask_expanded.sum(dim=1).clamp(min=1)
@@ -167,22 +172,27 @@ class RewardModel:
 
     The underlying nn.Module is only created when first accessed,
     allowing the module to be imported without PyTorch installed.
+
+    Optionally holds a trained ChainTokenizer for word-level tokenization.
+    Falls back to character-level tokenization if no tokenizer is set.
     """
 
     def __init__(self, device: str = "cpu"):
         """Initialize with lazy model creation.
 
         Args:
-            device: "cpu" or "cuda".
+            device: "cpu", "mps", or "cuda".
         """
         self._model = None
         self._device = device
+        self._tokenizer: ChainTokenizer | None = None
 
     @property
     def model(self):
         """Lazily create and return the underlying nn.Module."""
         if self._model is None:
-            self._model = _build_model()
+            vocab = self._tokenizer.vocab_size_actual if self._tokenizer and self._tokenizer.is_trained else 8000
+            self._model = _build_model(vocab_size=vocab)
             if self._model is not None:
                 try:
                     import torch
@@ -192,10 +202,72 @@ class RewardModel:
                     pass
         return self._model
 
+    def set_tokenizer(self, tokenizer: ChainTokenizer) -> None:
+        """Set a trained tokenizer and rebuild the model to match.
+
+        Must be called before the model is first accessed (before
+        ``is_available`` or ``model`` is queried).
+
+        Args:
+            tokenizer: A trained ChainTokenizer instance.
+        """
+        self._tokenizer = tokenizer
+        # Force rebuild with new vocab size
+        self._model = None
+
     @property
     def is_available(self) -> bool:
         """Check if PyTorch model is available."""
         return self.model is not None
+
+    def generate(self, sample) -> Any:
+        """Generate a chain for a sample using best-of-N selection.
+
+        Generates 1 correct solution chain + 4 corrupted variants, scores each
+        with the neural reward model. Correct chains get a strong bonus (+0.25)
+        so the model defaults to correct but can override with high confidence.
+
+        As training improves, the model learns to assign higher raw scores to
+        correct chains, eventually overriding the bonus on merit alone.
+
+        Args:
+            sample: MazeSample to generate a chain for.
+
+        Returns:
+            MazeReasoningChain with highest predicted reward.
+        """
+        from kicad_agent.training.chains import (
+            synthesize_maze_chain,
+            synthesize_corrupted_chain,
+        )
+
+        correct = synthesize_maze_chain(sample)
+
+        # 4 corrupted variants for contrast
+        corrupted = [
+            synthesize_corrupted_chain(sample, "wrong_coords", rng_seed=sample.seed),
+            synthesize_corrupted_chain(sample, "missing_steps", rng_seed=sample.seed + 1),
+            synthesize_corrupted_chain(sample, "wrong_order", rng_seed=sample.seed + 2),
+            synthesize_corrupted_chain(sample, "vague_reasoning", rng_seed=sample.seed + 3),
+        ]
+
+        best_chain = correct
+        best_score = -1.0
+
+        # Score correct chain with bonus
+        pred = predict_reward(self, correct.chain_text)
+        score = (pred.format_score + pred.quality_score + pred.accuracy_score) / 3.0 + 0.25
+        best_score = score
+
+        # Score corrupted chains (no bonus)
+        for chain in corrupted:
+            pred = predict_reward(self, chain.chain_text)
+            score = (pred.format_score + pred.quality_score + pred.accuracy_score) / 3.0
+            if score > best_score:
+                best_score = score
+                best_chain = chain
+
+        return best_chain
 
 
 def predict_reward(model: RewardModel, chain_text: str) -> PredictedReward:
@@ -214,7 +286,10 @@ def predict_reward(model: RewardModel, chain_text: str) -> PredictedReward:
 
     import torch
 
-    token_ids, attention_mask = _simple_tokenize(chain_text)
+    if model._tokenizer and model._tokenizer.is_trained:
+        token_ids, attention_mask = model._tokenizer.encode(chain_text)
+    else:
+        token_ids, attention_mask = _simple_tokenize(chain_text)
     input_ids = torch.tensor([token_ids], dtype=torch.long, device=model._device)
     attn_mask = torch.tensor([attention_mask], dtype=torch.long, device=model._device)
 
@@ -272,7 +347,10 @@ def train_reward_model(
     all_ids = []
     all_masks = []
     for text in train_texts:
-        ids, mask = _simple_tokenize(text)
+        if model._tokenizer and model._tokenizer.is_trained:
+            ids, mask = model._tokenizer.encode(text)
+        else:
+            ids, mask = _simple_tokenize(text)
         all_ids.append(ids)
         all_masks.append(mask)
 

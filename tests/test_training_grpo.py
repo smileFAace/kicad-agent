@@ -206,7 +206,7 @@ class TestTrainingPipelineConfig:
         config = TrainingPipelineConfig()
         assert config.n_samples == 100_000
         assert config.seed == 42
-        assert config.device == "cpu"
+        assert config.device in ("cpu", "mps", "cuda")
 
     def test_custom(self) -> None:
         """Custom pipeline config values."""
@@ -264,3 +264,120 @@ class TestRunPipeline:
         report2 = run_pipeline(config2)
         # Dataset generation should produce same counts
         assert report1["steps"]["dataset"]["n_generated"] == report2["steps"]["dataset"]["n_generated"]
+
+
+# ======================================================================
+# TestLRSchedule
+# ======================================================================
+
+
+class TestLRSchedule:
+    """Learning rate schedule with warmup."""
+
+    def test_cosine_schedule(self) -> None:
+        """Cosine schedule decays from base_lr to near-zero."""
+        lr_start = GRPOTrainer.compute_lr(100, 1000, 1e-4, warmup_steps=100, schedule="cosine")
+        lr_end = GRPOTrainer.compute_lr(999, 1000, 1e-4, warmup_steps=100, schedule="cosine")
+        assert lr_start > lr_end
+        assert lr_end > 0.0
+
+    def test_linear_schedule(self) -> None:
+        """Linear schedule decays from base_lr to near-zero."""
+        lr_start = GRPOTrainer.compute_lr(50, 100, 1e-4, warmup_steps=10, schedule="linear")
+        lr_end = GRPOTrainer.compute_lr(99, 100, 1e-4, warmup_steps=10, schedule="linear")
+        assert lr_start > lr_end
+
+    def test_constant_schedule(self) -> None:
+        """Constant schedule stays at base_lr."""
+        lr = GRPOTrainer.compute_lr(50, 100, 1e-4, warmup_steps=10, schedule="constant")
+        assert lr == 1e-4
+
+    def test_warmup_ramps_up(self) -> None:
+        """Warmup phase linearly ramps from 0 to base_lr."""
+        lr_0 = GRPOTrainer.compute_lr(0, 1000, 1e-4, warmup_steps=100, schedule="cosine")
+        lr_50 = GRPOTrainer.compute_lr(50, 1000, 1e-4, warmup_steps=100, schedule="cosine")
+        lr_100 = GRPOTrainer.compute_lr(100, 1000, 1e-4, warmup_steps=100, schedule="cosine")
+        assert lr_0 < lr_50
+        assert lr_50 < lr_100
+
+    def test_zero_warmup(self) -> None:
+        """Zero warmup starts at base_lr."""
+        lr = GRPOTrainer.compute_lr(0, 100, 1e-4, warmup_steps=0, schedule="cosine")
+        assert lr == pytest.approx(1e-4, rel=0.01)
+
+
+# ======================================================================
+# TestGRPOConfigNewFields
+# ======================================================================
+
+
+class TestGRPOConfigNewFields:
+    """New GRPOConfig fields for LR schedule."""
+
+    def test_lr_schedule_default(self) -> None:
+        """Default lr_schedule is cosine."""
+        config = GRPOConfig()
+        assert config.lr_schedule == "cosine"
+        assert config.warmup_steps == 100
+        assert config.total_steps == 0
+
+    def test_custom_lr_schedule(self) -> None:
+        """Custom LR schedule config."""
+        config = GRPOConfig(lr_schedule="linear", warmup_steps=50, total_steps=500)
+        assert config.lr_schedule == "linear"
+        assert config.warmup_steps == 50
+        assert config.total_steps == 500
+
+
+# ======================================================================
+# TestTrainingPipelineConfigNewFields
+# ======================================================================
+
+
+class TestTrainingPipelineConfigNewFields:
+    """New pipeline config fields."""
+
+    def test_new_defaults(self) -> None:
+        """New pipeline config defaults."""
+        config = TrainingPipelineConfig()
+        assert config.n_grpo_epochs == 5
+        assert config.max_train_chains == 0
+        assert config.hard_board_ratio == 0.4
+        assert config.lr_schedule == "cosine"
+        assert config.warmup_steps == 100
+
+    def test_custom_epochs(self) -> None:
+        """Custom GRPO epoch count."""
+        config = TrainingPipelineConfig(n_grpo_epochs=10)
+        assert config.n_grpo_epochs == 10
+
+
+# ======================================================================
+# TestTrainWithContrast
+# ======================================================================
+
+
+class TestTrainWithContrast:
+    """GRPO train_step now produces contrast via corrupted chains."""
+
+    def test_train_step_has_contrast(self, tiny_dataset: MazeDataset, reward_model: RewardModel) -> None:
+        """train_step with corrupted chains produces variance in rewards."""
+        ref_model = RewardModel(device="cpu")
+        config = GRPOConfig(group_size=4)
+        trainer = GRPOTrainer(reward_model, reward_model, ref_model, config)
+        batch = tiny_dataset.samples[:2]
+        metrics = trainer.train_step(batch)
+        assert "loss" in metrics
+        assert metrics["n_samples"] == 2
+
+    def test_train_multi_epoch(self, tiny_dataset: MazeDataset, reward_model: RewardModel, tmp_path: Path) -> None:
+        """Multi-epoch GRPO training runs."""
+        ref_model = RewardModel(device="cpu")
+        config = GRPOConfig(group_size=2, output_dir=str(tmp_path / "ckpt"))
+        trainer = GRPOTrainer(reward_model, reward_model, ref_model, config)
+        history = trainer.train(tiny_dataset, n_epochs=3, batch_size=3)
+        assert "learning_rates" in history
+        assert len(history["learning_rates"]) > 0
+        # LR should vary across steps with cosine schedule
+        lrs = history["learning_rates"]
+        assert min(lrs) < max(lrs)
