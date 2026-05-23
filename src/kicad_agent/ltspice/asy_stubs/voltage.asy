@@ -1,0 +1,10 @@
+VERSION 4
+SymbolType CELL
+PIN 32 64 NONE 0
+PINATTR PinName 1
+PINATTR Spicename %FN%
+PIN 32 -32 NONE 0
+PINATTR PinName 2
+PINATTR Spicename %FN%
+SYMATTR Prefix V
+SYMATTR Description Voltage source

@@ -1,0 +1,13 @@
+VERSION 4
+SymbolType CELL
+PIN 0 32 NONE 0
+PINATTR PinName D
+PINATTR Spicename %FN%
+PIN -32 0 NONE 0
+PINATTR PinName G
+PINATTR Spicename %FN%
+PIN 0 -32 NONE 0
+PINATTR PinName S
+PINATTR Spicename %FN%
+SYMATTR Prefix M
+SYMATTR Description P-channel MOSFET

@@ -1,0 +1,10 @@
+VERSION 4
+SymbolType CELL
+PIN 32 32 NONE 0
+PINATTR PinName A
+PINATTR Spicename %FN%
+PIN 32 -32 NONE 0
+PINATTR PinName K
+PINATTR Spicename %FN%
+SYMATTR Prefix D
+SYMATTR Description Diode
