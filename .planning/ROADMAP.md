@@ -232,7 +232,7 @@ Plans:
 Plans:
 - [x] 11-01-PLAN.md -- .asc parser with SpiceLib, frozen dataclass types, .asy symbol stubs, simulation command parser (LTSPICE-01, LTSPICE-02, LTSPICE-04)
 - [x] 11-02-PLAN.md -- .raw simulation result reader with SpiceLib RawRead and trace extraction (LTSPICE-05)
-- [ ] 11-03-PLAN.md -- Net connectivity graph derivation from wire geometry using networkx (LTSPICE-03)
+- [x] 11-03-PLAN.md -- Net connectivity graph derivation from wire geometry using networkx (LTSPICE-03)
 
 ### Phase 12: ADI Footprint Library
 **Goal**: On-demand fetching of ADI manufacturer footprints, symbols, and 3D models into KiCad library format, with caching and library management
@@ -267,5 +267,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 8. Visual Primitives for PCB Spatial Reasoning | 4/4 | Complete | 2026-05-22 |
 | 9. GRPO Spatial Reasoning Training | 4/4 | Complete | 2026-05-22 |
 | 10. AI-Driven PCB Generation | 6/6 | Complete | 2026-05-23 |
-| 11. LTspice Integration | 2/3 | In Progress | 2026-05-23 |
+| 11. LTspice Integration | 3/3 | Complete | 2026-05-23 |
 | 12. ADI Footprint Library | 0/3 | Planned | 2026-05-23 |
