@@ -12,6 +12,7 @@ from spicelib import AscEditor
 from spicelib.editor.asc_editor import ASC_INV_ROTATION_DICT
 from spicelib.editor.asc_editor import TextTypeEnum
 
+from kicad_agent.ltspice.sim_commands import parse_simulation_command
 from kicad_agent.ltspice.types import (
     LTspiceComponent,
     LTspiceDirective,
@@ -139,6 +140,7 @@ def parse_asc(asc_path: str | Path) -> LTspiceSchematic:
 
     # Extract directives
     directives: list[LTspiceDirective] = []
+    sim_commands: list = []
     for directive in editor.directives:
         dir_type = "DIRECTIVE" if directive.type == TextTypeEnum.DIRECTIVE else "COMMENT"
         directives.append(
@@ -147,6 +149,10 @@ def parse_asc(asc_path: str | Path) -> LTspiceSchematic:
                 directive_type=dir_type,
             )
         )
+        # Attempt to parse simulation commands from directive text
+        parsed_cmd = parse_simulation_command(directive.text)
+        if parsed_cmd is not None:
+            sim_commands.append(parsed_cmd)
 
     return LTspiceSchematic(
         components=tuple(components),
@@ -154,6 +160,7 @@ def parse_asc(asc_path: str | Path) -> LTspiceSchematic:
         flags=tuple(flags),
         directives=tuple(directives),
         source_path=str(resolved),
+        simulation_commands=tuple(sim_commands),
     )
 
 
