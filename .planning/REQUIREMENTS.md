@@ -125,6 +125,28 @@ DeepSeek-style RL training pipeline with coordinate-grounded reward signals on s
 - [ ] **GRPO-06**: Evaluation harness — held-out maze-routing tasks, baseline comparison, measurable improvement metrics, ablation studies
 - [ ] **GRPO-07**: Reproducible training pipeline — single-command execution, configurable hyperparameters, deterministic seeding, training checkpoints
 
+### AI-Driven PCB Generation (Phase 10)
+
+Two-tier phase: first close the practical operations gap, then build generative AI on top. Tier 1 operations are independently valuable — a user who can "export Gerber files" or "fix all ERC errors" gets value immediately. Tier 2 generation requires Tier 1 as foundation.
+
+**Tier 1: Complete the Operations Layer**
+
+- [ ] **GEN-01**: Parse and modify project-level files: sym-lib-table, fp-lib-table (add/remove/list library entries), .kicad_dru (read/write custom DRC rules), .kicad_pro (read/modify project settings)
+- [x] **GEN-02**: Manufacturing export wrappers via kicad-cli: Gerber, drill, BOM (with field customization and grouping), netlist (kicadsexpr, kicadxml), position files (ASCII, CSV), STEP 3D, PDF/SVG documentation, board statistics
+- [ ] **GEN-03**: Schematic ERC repair: auto-fix wire snapping to pins, remove orphaned labels, detect shorted nets, fix pin_not_connected errors with no-connect markers
+- [ ] **GEN-04**: Power net validation: check all power pins have connected power symbols, verify power nets span hierarchical sheets, detect missing GND/+3V3 before PCB work begins
+- [ ] **GEN-05**: PCB copper zone operations: add/modify/fill copper pour zones with net assignment, layer selection, clearance, and priority settings
+- [ ] **GEN-06**: Net class and design rule operations: assign net classes (Default, Power, etc.) with track width/via size/clearance, add custom DRC rules to .kicad_dru, board outline definition
+
+**Tier 2: Build Generation on Top**
+
+- [ ] **GEN-07**: GenerationIntent schema (Pydantic) for converting natural language design parameters to structured operation sequences with board specs, component lists, and connection topology
+- [ ] **GEN-08**: Template board generator extending maze_generator pattern to create valid .kicad_pcb and .kicad_sch files from high-level parameters (board size, layer count, component list, net topology)
+- [ ] **GEN-09**: Component placement engine with clearance validation, spatial scoring, decoupling cap proximity heuristics, and LLM-driven operation-sequence planning
+- [ ] **GEN-10**: End-to-end generation pipeline: intent → template board → operation sequence → validation → manufacturing export, single-command execution
+- [ ] **GEN-11**: Iterative refinement loop: generate → validate (ERC/DRC) → feed violations back for fixes → repeat until clean (max 5 iterations)
+- [ ] **GEN-12**: Generation evaluation: DRC pass rate on simple designs (5-10 components), manufacturing output completeness check, comparison vs manual baseline
+
 ## Out of Scope
 
 | Feature | Reason |
@@ -205,12 +227,24 @@ Which phases cover which requirements. Updated during roadmap creation.
 | GRPO-05 | Phase 9: GRPO Spatial Reasoning Training | Pending | 09-03 |
 | GRPO-06 | Phase 9: GRPO Spatial Reasoning Training | Pending | 09-04 |
 | GRPO-07 | Phase 9: GRPO Spatial Reasoning Training | Pending | 09-04 |
+| GEN-01 | Phase 10: AI-Driven PCB Generation | Pending | 10-01 |
+| GEN-02 | Phase 10: AI-Driven PCB Generation | Complete | 10-02 |
+| GEN-03 | Phase 10: AI-Driven PCB Generation | Pending | 10-03 |
+| GEN-04 | Phase 10: AI-Driven PCB Generation | Pending | 10-03 |
+| GEN-05 | Phase 10: AI-Driven PCB Generation | Pending | 10-03 |
+| GEN-06 | Phase 10: AI-Driven PCB Generation | Pending | 10-01, 10-03 |
+| GEN-07 | Phase 10: AI-Driven PCB Generation | Pending | 10-04 |
+| GEN-08 | Phase 10: AI-Driven PCB Generation | Pending | 10-04 |
+| GEN-09 | Phase 10: AI-Driven PCB Generation | Pending | 10-05 |
+| GEN-10 | Phase 10: AI-Driven PCB Generation | Pending | 10-06 |
+| GEN-11 | Phase 10: AI-Driven PCB Generation | Pending | 10-06 |
+| GEN-12 | Phase 10: AI-Driven PCB Generation | Pending | 10-06 |
 
 **Coverage:**
-- Total requirements: 59 (44 v1 + 8 Phase 8 + 7 Phase 9)
-- Mapped to phases: 59
+- Total requirements: 71 (44 v1 + 8 Phase 8 + 7 Phase 9 + 12 Phase 10)
+- Mapped to phases: 71
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-05-17*
-*Last updated: 2026-05-22 — Phase 9 GRPO Spatial Reasoning Training added*
+*Last updated: 2026-05-22 — Phase 10 AI-Driven PCB Generation added*

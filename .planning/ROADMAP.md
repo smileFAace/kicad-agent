@@ -2,7 +2,7 @@
 
 ## Overview
 
-Build an AI-safe KiCad structural editing tool in 9 phases: first achieve zero-diff round-trip parsing for all file types, then define the operation schema that insulates the LLM from raw S-expressions, then install validation gates before any mutation is attempted, then build editing operations from simple (components) to complex (nets, cross-file), add read-only analysis tools, wrap it all in a GSD Skill for Claude integration, add visual primitives for spatial reasoning, and finally train a GRPO-based reward model for PCB spatial reasoning using synthetic training data.
+Build an AI-safe KiCad structural editing tool in 10 phases: first achieve zero-diff round-trip parsing for all file types, then define the operation schema that insulates the LLM from raw S-expressions, then install validation gates before any mutation is attempted, then build editing operations from simple (components) to complex (nets, cross-file), add read-only analysis tools, wrap it all in a GSD Skill for Claude integration, add visual primitives for spatial reasoning, train a GRPO-based reward model for PCB spatial reasoning using synthetic training data, and finally build AI-driven generative capabilities for schematic capture and PCB layout.
 
 ## Phases
 
@@ -21,6 +21,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 7: GSD Skill Integration** - Claude skill manifest, handler, CLI wrapper, and project context renderer
 - [x] **Phase 8: Visual Primitives for PCB Spatial Reasoning** - AI that points while it reasons — coordinate-grounded DRC, routing guidance, and spatial analysis
 - [x] **Phase 9: GRPO Spatial Reasoning Training** - DeepSeek-style RL training with coordinate-grounded reward signals on synthetic PCB maze data
+- [ ] **Phase 10: AI-Driven PCB Generation** - Generative AI that creates schematics and PCB layouts from natural language intent, closing the gap from critic to creator
 
 ## Phase Details
 
@@ -187,10 +188,37 @@ Plans:
 - [x] 09-03-PLAN.md -- Reward model architecture (per-step dense rewards, format/quality/accuracy signals, anti-hacking penalties)
 - [x] 09-04-PLAN.md -- GRPO training loop (policy generation, reward scoring, policy updates, evaluation on held-out tasks)
 
+### Phase 10: AI-Driven PCB Generation
+**Goal**: Two-tier phase — first close the practical operations gap (project files, manufacturing exports, schematic repair, PCB operations), then build generative AI capabilities on top. Tier 1 operations are independently valuable; Tier 2 generation requires Tier 1.
+**Depends on**: Phase 9
+**Requirements**: GEN-01, GEN-02, GEN-03, GEN-04, GEN-05, GEN-06, GEN-07, GEN-08, GEN-09, GEN-10, GEN-11, GEN-12
+**Success Criteria** (what must be TRUE):
+  1. sym-lib-table and fp-lib-table can be parsed, queried, and modified (add/remove/list libraries)
+  2. Manufacturing files (Gerber, drill, BOM, netlist, position) can be exported via kicad-cli wrappers
+  3. Schematic ERC errors can be auto-repaired (wire snapping, orphaned labels, shorted nets)
+  4. Power net validation detects unconnected power pins before PCB work begins
+  5. Copper zones (ground/power pours) can be added and filled on PCB layouts
+  6. Net classes and custom DRC rules can be set via .kicad_dru parser
+  7. A GenerationIntent schema converts natural language design parameters to structured operation sequences
+  8. Template board generation creates valid .kicad_pcb files from high-level parameters (size, layers, components)
+  9. Component placement engine places components with clearance validation and spatial scoring
+  10. End-to-end pipeline: intent → template → operations → validation → manufacturing export
+  11. Iterative refinement loop: generate → validate (ERC/DRC) → fix → repeat until clean
+  12. Generated boards achieve DRC pass on simple designs (5-10 components with valid ERC)
+**Plans**: 6 plans
+
+Plans:
+- [x] 10-01-PLAN.md -- Project file parsers and library management (sym-lib-table, fp-lib-table, .kicad_dru, .kicad_pro) (GEN-01, GEN-06)
+- [x] 10-02-PLAN.md -- Manufacturing export wrappers (Gerber, drill, BOM, netlist, position, STEP, PDF via kicad-cli) (GEN-02)
+- [ ] 10-03-PLAN.md -- Schematic repair, validation gates, and PCB operations (ERC repair, power validation, copper zones, net classes, board outline) (GEN-03, GEN-04, GEN-05, GEN-06)
+- [ ] 10-04-PLAN.md -- GenerationIntent schema and template board generator (extends maze_generator pattern for real PCB/schematic creation) (GEN-07, GEN-08)
+- [ ] 10-05-PLAN.md -- Component placement engine and operation-sequence planning (placement algorithms, spatial validation, LLM-driven operation planning) (GEN-09)
+- [ ] 10-06-PLAN.md -- End-to-end generation pipeline with iterative refinement (full loop: intent → board → validate → fix → export) (GEN-10, GEN-11, GEN-12)
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -203,3 +231,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
 | 7. GSD Skill Integration | 4/4 | Complete | 2026-05-18 |
 | 8. Visual Primitives for PCB Spatial Reasoning | 4/4 | Complete | 2026-05-22 |
 | 9. GRPO Spatial Reasoning Training | 4/4 | Complete | 2026-05-22 |
+| 10. AI-Driven PCB Generation | 2/6 | In Progress | |

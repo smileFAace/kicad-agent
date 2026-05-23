@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: visual-primitives
-status: complete
-stopped_at: All 9 phases complete — 32/32 plans delivered, 658+ tests passing
-last_updated: "2026-05-22T16:30:00Z"
-last_activity: 2026-05-22
+status: executing
+stopped_at: Completed 10-02-PLAN.md (Manufacturing Export Wrappers). Next: 10-03-PLAN.md
+last_updated: "2026-05-23T04:51:00Z"
+last_activity: 2026-05-23
 progress:
-  total_phases: 9
+  total_phases: 10
   completed_phases: 9
-  total_plans: 32
-  completed_plans: 32
-  percent: 100
+  total_plans: 38
+  completed_plans: 34
+  percent: 89
 ---
 
 # Project State
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-05-17)
 
 ## Current Position
 
-Phase: 9 of 9 (GRPO Spatial Reasoning Training) -- COMPLETE
-Plan: 4 complete (09-01 through 09-04) -- all plans done
-Status: GRPO training pipeline complete. 90 new tests (25 dataset + 25 chains + 22 reward + 18 grpo). Phase 9 complete. All 9 phases done.
-Last activity: 2026-05-22
+Phase: 10 of 10 (AI-Driven PCB Generation) -- EXECUTING
+Plan: 10-02 complete (Manufacturing Export Wrappers). 2 of 6 plans done.
+Status: 10-01 (Project File Parsers) and 10-02 (Manufacturing Export Wrappers) complete. Next: 10-03 (Schematic Repair, Validation Gates, PCB Operations).
+Last activity: 2026-05-23
 
 Progress: [██████████] 100%
 
@@ -36,9 +36,9 @@ Progress: [██████████] 100%
 
 **Velocity:**
 
-- Total plans completed: 32
+- Total plans completed: 34
 - Average duration: 5 min
-- Total execution time: 2.5 hours
+- Total execution time: 2.8 hours
 
 **By Phase:**
 
@@ -53,10 +53,11 @@ Progress: [██████████] 100%
 | 07-gsd-skill-integration | 4 | 10 min | 3 min |
 | 08-visual-primitives | 4 | 29 min | 7 min |
 | 09-grpo-training | 4 | 12 min | 3 min |
+| 10-ai-driven-pcb-generation | 2 | 13 min | 7 min |
 
 **Recent Trend:**
 
-- Last 5 plans: 09-04 (4 min), 09-03 (2 min), 09-02 (1 min), 09-01 (5 min), 08-04 (3 min)
+- Last 5 plans: 10-02 (13 min), 10-01 (7 min), 09-04 (4 min), 09-03 (2 min), 09-02 (1 min)
 - Trend: Stable
 
 *Updated after each plan completion*
@@ -78,11 +79,17 @@ Recent decisions affecting current work:
 - Reward scoring uses three components: format (coord refs), quality (reasoning verbs), accuracy (ground truth match)
 - Anti-hacking: coordinate repetition, bounds violation, length anomaly, score inflation detection
 - Smooth penalty via tanh function prevents discontinuous reward cliffs
-- Neural reward model: 4-layer transformer (d=256, heads=4, ff=512) with character-level tokenizer
+- Neural reward model: 4-layer transformer (d=256, heads=4, ff=512) with word-level tokenizer
 - Lazy PyTorch import allows module to load without torch installed
 - GRPO group-relative advantages: (reward - group_mean) / (group_std + eps)
 - KL divergence penalty prevents policy drift from reference model
 - Pipeline: generate -> split -> synthesize -> score -> train reward model -> GRPO train -> evaluate -> compare
+- kicad-cli subcommand names differ from docs: `gerbers` not `gerber`, `--output` not `--output-dir`, layers comma-separated via `--layers`
+- Arduino_Mega.kicad_sch incompatible with kicad-cli (format version issue); use RaspberryPi-uHAT fixture for sch export tests
+
+### Roadmap Evolution
+
+- Phase 10 added: AI-Driven PCB Generation — bridging from AI critic to AI creator with generative schematic/PCB capabilities
 
 ### Pending Todos
 
@@ -100,5 +107,5 @@ None yet.
 
 ## Session Continuity
 
-Stopped at: Completed 09-04 (GRPO training loop) -- Phase 9 complete, all 9 phases done
-Resume file: .planning/phases/09-grpo-spatial-reasoning-training/09-04-PLAN.md
+Stopped at: Completed 10-02-PLAN.md (Manufacturing Export Wrappers). Next: 10-03-PLAN.md
+Resume file: .planning/phases/10-ai-driven-pcb-generation/10-03-PLAN.md
