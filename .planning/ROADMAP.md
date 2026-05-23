@@ -212,7 +212,7 @@ Plans:
 - [x] 10-02-PLAN.md -- Manufacturing export wrappers (Gerber, drill, BOM, netlist, position, STEP, PDF via kicad-cli) (GEN-02)
 - [x] 10-03-PLAN.md -- Schematic repair, validation gates, and PCB operations (ERC repair, power validation, copper zones, net classes, board outline) (GEN-03, GEN-04, GEN-05, GEN-06)
 - [x] 10-04-PLAN.md -- GenerationIntent schema and template board generator (extends maze_generator pattern for real PCB/schematic creation) (GEN-07, GEN-08)
-- [ ] 10-05-PLAN.md -- Component placement engine and operation-sequence planning (placement algorithms, spatial validation, LLM-driven operation planning) (GEN-09)
+- [x] 10-05-PLAN.md -- Component placement engine and operation-sequence planning (placement algorithms, spatial validation, LLM-driven operation planning) (GEN-09)
 - [ ] 10-06-PLAN.md -- End-to-end generation pipeline with iterative refinement (full loop: intent → board → validate → fix → export) (GEN-10, GEN-11, GEN-12)
 
 ## Progress
@@ -231,4 +231,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 7. GSD Skill Integration | 4/4 | Complete | 2026-05-18 |
 | 8. Visual Primitives for PCB Spatial Reasoning | 4/4 | Complete | 2026-05-22 |
 | 9. GRPO Spatial Reasoning Training | 4/4 | Complete | 2026-05-22 |
-| 10. AI-Driven PCB Generation | 3/6 | In Progress | |
+| 10. AI-Driven PCB Generation | 5/6 | In Progress | |
