@@ -224,11 +224,8 @@ class RewardModel:
         """Generate a chain for a sample using best-of-N selection.
 
         Generates 1 correct solution chain + 4 corrupted variants, scores each
-        with the neural reward model. Correct chains get a strong bonus (+0.25)
-        so the model defaults to correct but can override with high confidence.
-
-        As training improves, the model learns to assign higher raw scores to
-        correct chains, eventually overriding the bonus on merit alone.
+        with the neural reward model. The chain with the highest predicted
+        reward is selected — no artificial bonus.
 
         Args:
             sample: MazeSample to generate a chain for.
@@ -241,26 +238,18 @@ class RewardModel:
             synthesize_corrupted_chain,
         )
 
-        correct = synthesize_maze_chain(sample)
-
-        # 4 corrupted variants for contrast
-        corrupted = [
+        candidates = [synthesize_maze_chain(sample)]
+        candidates += [
             synthesize_corrupted_chain(sample, "wrong_coords", rng_seed=sample.seed),
             synthesize_corrupted_chain(sample, "missing_steps", rng_seed=sample.seed + 1),
             synthesize_corrupted_chain(sample, "wrong_order", rng_seed=sample.seed + 2),
             synthesize_corrupted_chain(sample, "vague_reasoning", rng_seed=sample.seed + 3),
         ]
 
-        best_chain = correct
+        best_chain = candidates[0]
         best_score = -1.0
 
-        # Score correct chain with bonus
-        pred = predict_reward(self, correct.chain_text)
-        score = (pred.format_score + pred.quality_score + pred.accuracy_score) / 3.0 + 0.25
-        best_score = score
-
-        # Score corrupted chains (no bonus)
-        for chain in corrupted:
+        for chain in candidates:
             pred = predict_reward(self, chain.chain_text)
             score = (pred.format_score + pred.quality_score + pred.accuracy_score) / 3.0
             if score > best_score:
