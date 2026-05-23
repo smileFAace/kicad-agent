@@ -11,6 +11,7 @@ from kicad_agent.ltspice.sim_commands import (
     TranCommand,
     parse_simulation_command,
 )
+from kicad_agent.ltspice.symbol_mapper import SymbolMapper
 from kicad_agent.ltspice.types import (
     LTspiceComponent,
     LTspiceDirective,
@@ -19,6 +20,8 @@ from kicad_agent.ltspice.types import (
     LTspiceTrace,
     LTspiceWire,
     SimulationResult,
+    SymbolMappingResult,
+    SymbolMappingType,
 )
 
 __all__ = [
@@ -34,6 +37,9 @@ __all__ = [
     "NoiseCommand",
     "OpCommand",
     "SimulationResult",
+    "SymbolMapper",
+    "SymbolMappingResult",
+    "SymbolMappingType",
     "TranCommand",
     "parse_asc",
     "parse_simulation_command",
