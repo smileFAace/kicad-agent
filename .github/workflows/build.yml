@@ -1,0 +1,58 @@
+name: Build
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for setuptools-scm versioning
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[dev]"
+          pip install build setuptools-scm
+
+      - name: Lint with ruff
+        run: ruff check src/ tests/
+
+      - name: Type check with mypy
+        run: mypy src/
+
+      - name: Run tests
+        run: python -m pytest tests/ -x -q --tb=short
+
+      - name: Build package
+        run: python -m build
+
+      - name: Verify wheel contents
+        run: |
+          unzip -l dist/*.whl | head -30
+          # Verify no tests in wheel
+          if unzip -l dist/*.whl | grep -q "tests/"; then
+            echo "ERROR: tests/ found in wheel"
+            exit 1
+          fi
+          # Verify version is not fallback
+          VERSION=$(unzip -p dist/*.whl '*/METADATA' | grep "^Version:" | head -1 | cut -d' ' -f2)
+          echo "Package version: $VERSION"
+          if [ "$VERSION" = "0.0.0" ]; then
+            echo "ERROR: Version is fallback 0.0.0 -- setuptools-scm failed"
+            exit 1
+          fi
