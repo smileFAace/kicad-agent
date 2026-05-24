@@ -71,6 +71,12 @@ class BipartiteAttentionLayer(nn.Module):
         # MHA attn_mask: True positions are *ignored*
         attn_mask = (adj_matrix == 0)  # (B, n_comp, n_net) True = not connected
 
+        # Handle disconnected components: if all positions are masked (no net
+        # connections), allow attending to all nets to avoid NaN from softmax
+        # over all -inf values.
+        fully_masked = attn_mask.all(dim=-1, keepdim=True)  # (B, n_comp, 1)
+        attn_mask = torch.where(fully_masked, False, attn_mask)
+
         # For MultiheadAttention with batch_first:
         # query: (B, n_comp, comp_dim)
         # key/value: (B, n_net, comp_dim)
@@ -79,7 +85,6 @@ class BipartiteAttentionLayer(nn.Module):
         n_heads = self.attention.num_heads
 
         # Expand mask for multi-head: (B*n_heads, n_comp, n_net)
-        # First, ensure mask is float for masking
         if attn_mask.dtype != torch.bool:
             attn_mask = attn_mask.bool()
         expanded_mask = attn_mask.unsqueeze(1).expand(
