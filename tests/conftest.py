@@ -12,6 +12,9 @@ from pathlib import Path
 
 import pytest
 
+# Register LLM test fixtures from conftest_llm.py
+pytest_plugins = ["conftest_llm"]
+
 # Test fixture directory for copied KiCad files
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
