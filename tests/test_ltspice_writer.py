@@ -19,6 +19,15 @@ from kicad_agent.ltspice.asc_writer import (
     CoordinateTransformer,
     _sanitize_net_name,
 )
+from kicad_agent.ltspice.sim_commands import (
+    AcCommand,
+    DcCommand,
+    NoiseCommand,
+    OpCommand,
+    TranCommand,
+    parse_simulation_command,
+    serialize_sim_command,
+)
 from kicad_agent.ltspice.symbol_mapper import SymbolMapper
 
 
@@ -295,3 +304,71 @@ class TestExportWithUnmappedSymbol:
         refs = {c.reference for c in parsed.components}
         assert "R1" in refs
         assert "U1" not in refs
+
+
+# ---------------------------------------------------------------------------
+# TestSimCommandSerialization (TDD RED phase)
+# ---------------------------------------------------------------------------
+
+
+class TestSimCommandSerialization:
+    """Serialize SimulationCommand dataclasses to LTspice directive text."""
+
+    def test_tran_command_serializes(self):
+        """TranCommand serializes to '.tran {tstart} {tstop} {tstart_meas} {tstep}'."""
+        cmd = TranCommand(tstart=0, tstop=0.001, tstart_meas=0, tstep=0.000001)
+        result = serialize_sim_command(cmd)
+        assert result == ".tran 0 0.001 0 1e-06"
+
+    def test_ac_command_serializes(self):
+        """AcCommand serializes to '.ac {sweep} {npoints} {fstart} {fstop}'."""
+        cmd = AcCommand(sweep="dec", npoints=10, fstart=1.0, fstop=1000000.0)
+        result = serialize_sim_command(cmd)
+        assert result == ".ac dec 10 1.0 1000000.0"
+
+    def test_dc_command_serializes(self):
+        """DcCommand serializes to '.dc {source} {start} {stop} {step}'."""
+        cmd = DcCommand(source="V1", start=0.0, stop=5.0, step=0.1)
+        result = serialize_sim_command(cmd)
+        assert result == ".dc V1 0.0 5.0 0.1"
+
+    def test_op_command_serializes(self):
+        """OpCommand serializes to '.op'."""
+        cmd = OpCommand()
+        result = serialize_sim_command(cmd)
+        assert result == ".op"
+
+    def test_noise_command_serializes(self):
+        """NoiseCommand serializes to '.noise {output} {source} {sweep} {npoints} {fstart} {fstop}'."""
+        cmd = NoiseCommand(
+            output="V(out)", source="src", sweep="dec",
+            npoints=10, fstart=1.0, fstop=1000.0,
+        )
+        result = serialize_sim_command(cmd)
+        assert result == ".noise V(out) src dec 10 1.0 1000.0"
+
+    def test_round_trip_tran(self):
+        """Round-trip: serialize TranCommand -> parse -> produces equivalent command."""
+        original = TranCommand(tstart=0, tstop=0.001, tstart_meas=0, tstep=0.000001)
+        text = serialize_sim_command(original)
+        recovered = parse_simulation_command(text)
+        assert isinstance(recovered, TranCommand)
+        assert recovered.tstart == original.tstart
+        assert recovered.tstop == original.tstop
+
+    def test_round_trip_ac(self):
+        """Round-trip: serialize AcCommand -> parse -> produces equivalent command."""
+        original = AcCommand(sweep="dec", npoints=10, fstart=1.0, fstop=1000000.0)
+        text = serialize_sim_command(original)
+        recovered = parse_simulation_command(text)
+        assert isinstance(recovered, AcCommand)
+        assert recovered.sweep == original.sweep
+        assert recovered.npoints == original.npoints
+
+    def test_round_trip_dc(self):
+        """Round-trip: serialize DcCommand -> parse -> produces equivalent command."""
+        original = DcCommand(source="V1", start=0.0, stop=5.0, step=0.1)
+        text = serialize_sim_command(original)
+        recovered = parse_simulation_command(text)
+        assert isinstance(recovered, DcCommand)
+        assert recovered.source == original.source
