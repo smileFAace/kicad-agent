@@ -372,3 +372,94 @@ class TestSimCommandSerialization:
         recovered = parse_simulation_command(text)
         assert isinstance(recovered, DcCommand)
         assert recovered.source == original.source
+
+
+# ---------------------------------------------------------------------------
+# TestSimCommandInjection
+# ---------------------------------------------------------------------------
+
+
+class TestSimCommandInjection:
+    """Test simulation command injection into exported .asc files."""
+
+    def test_directive_in_exported_asc(self, tmp_path):
+        """A TranCommand injected via AscWriter appears in the exported .asc
+        and is recoverable via parse_asc()."""
+        sch = _build_minimal_schematic()
+        mapper = SymbolMapper()
+        transformer = CoordinateTransformer()
+        writer = AscWriter(
+            sch, mapper, transformer,
+            simulation_commands=[TranCommand(0, 0.001, 0, 0.000001)],
+        )
+        output = tmp_path / "sim_directive.asc"
+        writer.write(output)
+        result = parse_asc(output)
+        assert len(result.simulation_commands) >= 1
+        cmd = result.simulation_commands[0]
+        assert isinstance(cmd, TranCommand)
+        assert cmd.tstop == 0.001
+
+    def test_multiple_commands_injected(self, tmp_path):
+        """Multiple simulation commands all survive round-trip."""
+        sch = _build_minimal_schematic()
+        mapper = SymbolMapper()
+        transformer = CoordinateTransformer()
+        cmds = [
+            TranCommand(0, 0.001, 0, 0.000001),
+            AcCommand("dec", 10, 1.0, 1000000.0),
+        ]
+        writer = AscWriter(
+            sch, mapper, transformer,
+            simulation_commands=cmds,
+        )
+        output = tmp_path / "multi_cmd.asc"
+        writer.write(output)
+        result = parse_asc(output)
+        assert len(result.simulation_commands) >= 2
+
+    def test_add_simulation_command_method(self, tmp_path):
+        """add_simulation_command() appends commands that survive export."""
+        sch = _build_minimal_schematic()
+        mapper = SymbolMapper()
+        transformer = CoordinateTransformer()
+        writer = AscWriter(sch, mapper, transformer)
+        writer.add_simulation_command(OpCommand())
+        output = tmp_path / "add_cmd.asc"
+        writer.write(output)
+        result = parse_asc(output)
+        assert any(isinstance(c, OpCommand) for c in result.simulation_commands)
+
+
+# ---------------------------------------------------------------------------
+# TestFullRoundTrip
+# ---------------------------------------------------------------------------
+
+
+class TestFullRoundTrip:
+    """End-to-end: KiCad schematic + sim commands -> .asc -> parse back."""
+
+    def test_components_and_commands_survive(self, tmp_path):
+        """Full round-trip: export KiCad schematic with sim commands,
+        parse back with Phase 11 parser, verify components and commands."""
+        sch = _build_minimal_schematic()
+        mapper = SymbolMapper()
+        transformer = CoordinateTransformer()
+        writer = AscWriter(
+            sch, mapper, transformer,
+            simulation_commands=[TranCommand(0, 0.001, 0, 0.000001)],
+        )
+        output = tmp_path / "full_roundtrip.asc"
+        writer.write(output)
+
+        # Parse back
+        result = parse_asc(output)
+
+        # Verify components
+        assert len(result.components) > 0
+
+        # Verify sim command
+        assert len(result.simulation_commands) >= 1
+        tran = result.simulation_commands[0]
+        assert isinstance(tran, TranCommand)
+        assert tran.tstop == pytest.approx(0.001)

@@ -9,14 +9,17 @@ from __future__ import annotations
 
 import logging
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from spicelib import AscEditor
 from spicelib.editor.asc_editor import ASC_ROTATION_DICT, Text, TextTypeEnum
+from spicelib.editor.asc_editor import asc_text_align_set
 from spicelib.editor.base_schematic import ERotation, Line, Point, SchematicComponent
 
 from kicad_agent.ltspice.asc_parser import ASY_STUBS_DIR
+from kicad_agent.ltspice.sim_commands import SimulationCommand, serialize_sim_command
 from kicad_agent.ltspice.symbol_mapper import SymbolMapper
 
 logger = logging.getLogger(__name__)
@@ -115,6 +118,7 @@ class AscWriter:
         schematic,
         symbol_mapper: SymbolMapper,
         coordinate_transformer: CoordinateTransformer,
+        simulation_commands: Sequence[SimulationCommand] = (),
     ) -> None:
         """Initialize the writer.
 
@@ -122,10 +126,12 @@ class AscWriter:
             schematic: A kiutils Schematic object.
             symbol_mapper: SymbolMapper for KiCad->LTspice symbol translation.
             coordinate_transformer: CoordinateTransformer for mm->internal units.
+            simulation_commands: Simulation commands to inject as directives.
         """
         self._schematic = schematic
         self._mapper = symbol_mapper
         self._transformer = coordinate_transformer
+        self._sim_commands = list(simulation_commands)
 
     def write(self, output_path: str | Path) -> Path:
         """Export the KiCad schematic to an LTspice .asc file.
@@ -169,6 +175,9 @@ class AscWriter:
 
             # Process net labels
             self._write_labels(editor)
+
+            # Inject simulation commands as directives
+            self._write_sim_commands(editor)
 
             # Save output
             editor.save_netlist(str(output))
@@ -292,6 +301,27 @@ class AscWriter:
                 label.position.X, label.position.Y
             )
             self._add_flag(editor, lt_x, lt_y, text)
+
+    def _write_sim_commands(self, editor: AscEditor) -> None:
+        """Inject simulation commands as LTspice TEXT directives."""
+        for cmd in self._sim_commands:
+            directive_text = serialize_sim_command(cmd)
+            d = Text(
+                coord=Point(384, 48),
+                text=directive_text,
+                size=2,
+                type=TextTypeEnum.DIRECTIVE,
+            )
+            d = asc_text_align_set(d, "Left")
+            editor.directives.append(d)
+
+    def add_simulation_command(self, cmd: SimulationCommand) -> None:
+        """Add a simulation command to be injected during write().
+
+        Args:
+            cmd: A SimulationCommand dataclass to serialize as a directive.
+        """
+        self._sim_commands.append(cmd)
 
     @staticmethod
     def _get_property(sym, key: str, default: str = "") -> str:
