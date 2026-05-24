@@ -1,8 +1,23 @@
+[build-system]
+requires = ["setuptools>=75.0", "setuptools-scm>=10.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "kicad-agent"
-version = "0.1.0"
+dynamic = ["version"]
 description = "AI-safe structural editing of KiCad schematic, PCB, symbol, and footprint files"
+readme = {file = "README.md", content-type = "text/markdown"}
+license = "MIT"
 requires-python = ">=3.11"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Electronic Design Automation (EDA)",
+]
 dependencies = [
     "kiutils>=1.4.8",
     "sexpdata>=1.0.0",
@@ -24,13 +39,32 @@ dev = [
 llm = [
     "anthropic>=0.61.0",
 ]
+docs = [
+    "mkdocs-material>=9.7",
+    "mkdocstrings-python>=2.0",
+]
 
 [project.scripts]
 kicad-agent = "kicad_agent.cli:main"
 
+[project.urls]
+Homepage = "https://github.com/bretbouchard/kicad-agent"
+Documentation = "https://bretbouchard.github.io/kicad-agent"
+Repository = "https://github.com/bretbouchard/kicad-agent"
+Issues = "https://github.com/bretbouchard/kicad-agent/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools_scm]
+fallback_version = "0.0.0"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "tests"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
 
 [tool.ruff]
 line-length = 120
