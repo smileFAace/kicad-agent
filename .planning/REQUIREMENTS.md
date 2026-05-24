@@ -288,6 +288,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PLACE-05 | Phase 16: Component Placement AI | Complete | 16-04 |
 | DIST-01 | Phase 17: Package & Distribution | Complete | 17-01 |
 | DIST-02 | Phase 17: Package & Distribution | Complete | 17-01 |
+| DIST-03 | Phase 17: Package & Distribution | Complete | 17-02 |
 
 **Coverage:**
 - Total requirements: 94 (44 v1 + 8 Phase 8 + 7 Phase 9 + 12 Phase 10 + 5 Phase 11 + 4 Phase 12 + 5 Phase 13 + 4 Phase 14 + 5 Phase 16)
@@ -337,3 +338,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 - [x] **DIST-01**: pyproject.toml has complete [build-system] section with setuptools backend and setuptools-scm dynamic versioning
 - [x] **DIST-02**: pip install . produces a wheel with all kicad_agent modules and a kicad-agent console script entry point
+- [x] **DIST-03**: GitHub Actions workflows for build verification on push/PR and PyPI publishing on version tag push via Trusted Publishing (OIDC)
