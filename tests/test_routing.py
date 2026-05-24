@@ -13,6 +13,11 @@ import pytest
 
 from kicad_agent.routing.constraints import RoutingConstraints
 from kicad_agent.routing.graph import RoutingGraph
+from kicad_agent.routing.diff_pair import (
+    DiffPairResult,
+    _path_length,
+    route_differential_pair,
+)
 from kicad_agent.routing.pathfinder import (
     RouteResult,
     build_routing_graph,
@@ -401,3 +406,159 @@ class TestBuildRoutingGraph:
         graph = build_routing_graph((0, 0, 20, 20), constraints=c)
         # 0, 2, 4, ..., 20 -> 11 per axis = 121 nodes
         assert graph.node_count == 11 * 11
+
+
+# ---------------------------------------------------------------------------
+# ROUTE-03: Differential pair routing
+# ---------------------------------------------------------------------------
+
+
+class TestPathLength:
+    """Unit test for _path_length utility."""
+
+    def test_straight_line(self) -> None:
+        """Straight horizontal path has correct length."""
+        path = ((0.0, 0.0), (10.0, 0.0))
+        assert _path_length(path) == 10.0
+
+    def test_two_segments(self) -> None:
+        """L-shaped path sums both segments."""
+        path = ((0.0, 0.0), (3.0, 0.0), (3.0, 4.0))
+        assert _path_length(path) == 7.0
+
+    def test_diagonal(self) -> None:
+        """Diagonal path uses Euclidean distance."""
+        path = ((0.0, 0.0), (3.0, 4.0))
+        assert abs(_path_length(path) - 5.0) < 1e-9
+
+    def test_single_point(self) -> None:
+        """Single point has zero length."""
+        path = ((5.0, 5.0),)
+        assert _path_length(path) == 0.0
+
+    def test_empty_path(self) -> None:
+        """Empty path has zero length."""
+        assert _path_length(()) == 0.0
+
+
+class TestDifferentialPair:
+    """ROUTE-03: Differential pair routing with length matching."""
+
+    def _make_empty_graph(
+        self, size_mm: float = 50.0, grid_res: float = 1.0
+    ) -> RoutingGraph:
+        """Helper: build a routing graph with no obstacles."""
+        return RoutingGraph(
+            board_bounds=(0, 0, size_mm, size_mm),
+            obstacles=[],
+            constraints=RoutingConstraints(grid_resolution_mm=grid_res),
+        )
+
+    def test_diff_pair_basic(self) -> None:
+        """Both nets route on clear board, valid=True."""
+        graph = self._make_empty_graph(30.0, 1.0)
+        # Parallel paths: positive at y=5, negative at y=7, both going x=0->20.
+        result = route_differential_pair(
+            graph,
+            source_pos=(0, 5),
+            source_neg=(0, 7),
+            target_pos=(20, 5),
+            target_neg=(20, 7),
+            net_name_pos="DP_P",
+            net_name_neg="DP_N",
+        )
+        assert isinstance(result, DiffPairResult)
+        assert result.valid
+        assert len(result.net_positive) >= 2
+        assert len(result.net_negative) >= 2
+        assert result.net_positive[0] == (0.0, 5.0)
+        assert result.net_positive[-1] == (20.0, 5.0)
+        assert result.net_negative[0] == (0.0, 7.0)
+        assert result.net_negative[-1] == (20.0, 7.0)
+
+    def test_diff_pair_length_matching(self) -> None:
+        """Asymmetric positions trigger serpentining on the shorter path."""
+        graph = self._make_empty_graph(50.0, 1.0)
+        # Positive net: short path (0,5) -> (10,5) = 10mm
+        # Negative net: long path (0,7) -> (30,7) = 30mm
+        # Mismatch ~20mm should trigger serpentining on positive net.
+        result = route_differential_pair(
+            graph,
+            source_pos=(0, 5),
+            source_neg=(0, 7),
+            target_pos=(10, 5),
+            target_neg=(30, 7),
+            target_spacing_mm=1.0,
+            max_length_mismatch_mm=2.0,
+        )
+        assert isinstance(result, DiffPairResult)
+        assert result.valid
+        # After serpentining, mismatch should be within tolerance.
+        assert result.mismatch_mm <= 2.0
+
+    def test_diff_pair_blocked_positive(self) -> None:
+        """Blocked positive net returns invalid result."""
+        obstacle = SpatialBox(0, 0, 5, 10, "zone", "BLOCK_P")
+        graph = RoutingGraph(
+            board_bounds=(0, 0, 30, 30),
+            obstacles=[obstacle],
+            constraints=RoutingConstraints(grid_resolution_mm=1.0),
+        )
+        result = route_differential_pair(
+            graph,
+            source_pos=(2, 5),   # Inside obstacle -- blocked.
+            source_neg=(10, 5),
+            target_pos=(20, 5),
+            target_neg=(20, 7),
+        )
+        assert isinstance(result, DiffPairResult)
+        assert not result.valid
+        assert result.net_positive == ()
+
+    def test_diff_pair_blocked_negative(self) -> None:
+        """Blocked negative net returns invalid result."""
+        obstacle = SpatialBox(0, 0, 5, 10, "zone", "BLOCK_N")
+        graph = RoutingGraph(
+            board_bounds=(0, 0, 30, 30),
+            obstacles=[obstacle],
+            constraints=RoutingConstraints(grid_resolution_mm=1.0),
+        )
+        result = route_differential_pair(
+            graph,
+            source_pos=(10, 5),
+            source_neg=(2, 5),   # Inside obstacle -- blocked.
+            target_pos=(20, 5),
+            target_neg=(20, 7),
+        )
+        assert isinstance(result, DiffPairResult)
+        assert not result.valid
+        assert result.net_negative == ()
+
+    def test_diff_pair_serpentine_bounded(self) -> None:
+        """Serpentine amplitude does not exceed spacing_mm * 2."""
+        graph = self._make_empty_graph(50.0, 1.0)
+        spacing = 1.0
+        result = route_differential_pair(
+            graph,
+            source_pos=(0, 5),
+            source_neg=(0, 7),
+            target_pos=(10, 5),
+            target_neg=(30, 7),
+            target_spacing_mm=spacing,
+            max_length_mismatch_mm=1.0,
+        )
+        assert isinstance(result, DiffPairResult)
+        # The shorter path (positive) should have more points than a
+        # straight line if serpentining was applied.
+        if result.length_positive_mm > 10.5:
+            # Serpentining was applied -- verify path has extra points.
+            assert len(result.net_positive) > 2
+
+        # Check that serpentine bumps don't deviate more than spacing*2
+        # from the original straight-line path. For a horizontal path at y=5,
+        # all y-coordinates should be within [5 - 2*spacing, 5 + 2*spacing].
+        max_amplitude = spacing * 2.0
+        for x, y in result.net_positive:
+            assert abs(y - 5.0) <= max_amplitude + 1e-6, (
+                f"Point ({x},{y}) exceeds amplitude bound"
+            )
