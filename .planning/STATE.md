@@ -72,6 +72,7 @@ Progress: [████████░░] 80%
 | Phase 15 P04 | 7min | 1 task | 3 files |
 | Phase 16 P01 | 4min | 1 task | 6 files |
 | Phase 16 P03 | 5min | 2 tasks | 5 files |
+| Phase 16 P02 | 29min | 2 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -124,6 +125,11 @@ Recent decisions affecting current work:
 - [Phase 15]: Manufacturing export (Gerber/BOM) runs as non-fatal stage after evaluation
 - [Phase 16]: SpatialQueryEngine STRtree for O(n log n) clearance instead of O(n^2) pairwise
 - [Phase 16]: Weighted composite score: 0.3 HPWL + 0.2 congestion + 0.3 clearance + 0.2 edge
+- [Phase 16]: Sigmoid output scaling guarantees (x,y) within board bounds; rotation mapped as sigmoid*360-180
+- [Phase 16]: Attention mask fallback for disconnected components prevents NaN from all-masked softmax
+- [Phase 16]: Training uses advantage-weighted energy surrogate (non-diff reward for advantages, diff energy for gradients)
+- [Phase 16]: Synthetic data uses scipy dual_annealing (200 iterations) for near-optimal placement targets
+- [Phase 16]: Composite training loss: HPWL + 10x overlap + 5x edge penalty; GRPO reward: 0.3 accuracy + 0.4 wire + 0.3 clearance
 
 ### Roadmap Evolution
 
@@ -137,7 +143,7 @@ None yet.
 
 ### Blockers/Concerns
 
-- 6 pre-existing test failures remain (ref ops, kicad-cli fixture compatibility) -- not regressions, not caused by Phase 12
+- Pre-existing test failures resolved -- 1161 passed, 1 skipped, 0 failures as of Phase 16 P02
 
 ## Deferred Items
 

@@ -322,7 +322,7 @@ Plans:
 
 Plans:
 - [x] 16-01-PLAN.md -- Schematic netlist to placement graph converter (PLACE-01)
-- [ ] 16-02-PLAN.md -- Placement prediction model architecture and training (PLACE-02, PLACE-04)
+- [x] 16-02-PLAN.md -- Placement prediction model architecture and training (PLACE-02, PLACE-04)
 - [x] 16-03-PLAN.md -- DRC-aware placement validation and scoring (PLACE-03)
 - [ ] 16-04-PLAN.md -- Interactive placement mode with constraint propagation (PLACE-05)
 
