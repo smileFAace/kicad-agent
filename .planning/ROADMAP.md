@@ -324,7 +324,7 @@ Plans:
 - [x] 16-01-PLAN.md -- Schematic netlist to placement graph converter (PLACE-01)
 - [x] 16-02-PLAN.md -- Placement prediction model architecture and training (PLACE-02, PLACE-04)
 - [x] 16-03-PLAN.md -- DRC-aware placement validation and scoring (PLACE-03)
-- [ ] 16-04-PLAN.md -- Interactive placement mode with constraint propagation (PLACE-05)
+- [x] 16-04-PLAN.md -- Interactive placement mode with constraint propagation (PLACE-05)
 
 ### Phase 17: Package & Distribution
 **Goal**: Make kicad-agent installable via pip with a proper CLI entry point, PyPI package, and documentation. Transform from repo-only tool to distributable package.
