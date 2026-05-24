@@ -25,7 +25,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 11: LTspice Integration** - Parse LTspice .asc schematics, extract components/nets/simulation commands, bridge KiCad-LTspice workflows
 - [x] **Phase 12: ADI Footprint Library** - On-demand ADI footprint/symbol download, library management, and manufacturer part integration
 - [x] **Phase 13: Real-World PCB Training Pipeline** - GitHub crawler for KiCad repos, parse schematic+PCB pairs into structured graph datasets for real-world training
-- [ ] **Phase 14: Bidirectional KiCad↔LTspice** - KiCad schematic → .asc writer, close the simulation loop for design-simulate-iterate workflows
+- [x] **Phase 14: Bidirectional KiCad↔LTspice** - KiCad schematic → .asc writer, close the simulation loop for design-simulate-iterate workflows
 - [ ] **Phase 15: AI Generation Wiring** - LLM-driven component suggestion, schematic drafting, design critique, and natural language to operations pipeline
 - [ ] **Phase 16: Component Placement AI** - Predict optimal component placement from schematic netlist using spatial reasoning and training data
 - [ ] **Phase 17: Package & Distribution** - PyPI publish, CLI entry point, pip install kicad-agent, documentation site
@@ -288,7 +288,7 @@ Plans:
 Plans:
 - [x] 14-01-PLAN.md -- KiCad component → LTspice symbol mapping table and converter (BIDI-02)
 - [x] 14-02-PLAN.md -- .asc writer: KiCad schematic to LTspice .asc export (BIDI-01, BIDI-03)
-- [ ] 14-03-PLAN.md -- Simulation command injection and round-trip validation (BIDI-04)
+- [x] 14-03-PLAN.md -- Simulation command injection and round-trip validation (BIDI-04)
 
 ### Phase 15: AI Generation Wiring
 **Goal**: Wire an actual LLM into the Phase 10 generation pipeline — component suggestions from natural language, schematic drafting from netlists, design critique with spatial reasoning, and iterative refinement loop
@@ -393,7 +393,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 11. LTspice Integration | 3/3 | Complete | 2026-05-23 |
 | 12. ADI Footprint Library | 3/3 | Complete | 2026-05-23 |
 | 13. Real-World PCB Training Pipeline | 3/3 | Complete | 2026-05-23 |
-| 14. Bidirectional KiCad↔LTspice | 1/3 | In Progress | |
+| 14. Bidirectional KiCad↔LTspice | 3/3 | Complete | 2026-05-24 |
 | 15. AI Generation Wiring | 0/4 | Planned | |
 | 16. Component Placement AI | 0/4 | Planned | |
 | 17. Package & Distribution | 0/3 | Planned | |
