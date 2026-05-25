@@ -32,6 +32,7 @@ from pathlib import Path
 # Add src to path so this script works without installing the package
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from kicad_agent.crawler.bulk_fetcher import BulkFetcher  # noqa: E402
 from kicad_agent.crawler.github_discovery import GithubDiscovery  # noqa: E402
 from kicad_agent.crawler.file_fetcher import FileFetcher  # noqa: E402
 from kicad_agent.training.graph_builder import build_board_graph  # noqa: E402
@@ -56,6 +57,127 @@ def _get_existing_repos(staging_dir: Path) -> set[str]:
     if not staging_dir.is_dir():
         return set()
     return {d.name for d in staging_dir.iterdir() if d.is_dir()}
+
+
+def _run_bulk(
+    args: argparse.Namespace,
+    repos: list,
+    staging_dir: Path,
+) -> int:
+    """Bulk mode: git clone repos, scan locally, parse, and write splits.
+
+    Uses ``git clone --depth 1`` instead of the Contents API. Orders of
+    magnitude faster for large crawls because we get the entire repo in
+    one operation and scan for KiCad files locally.
+
+    Args:
+        args: Parsed CLI arguments.
+        repos: List of RepoInfo from discovery.
+        staging_dir: Local directory for cloned repos.
+
+    Returns:
+        Exit code (0 = success).
+    """
+    from collections import Counter
+
+    fetcher = BulkFetcher(staging_dir=staging_dir, timeout=args.clone_timeout)
+    repo_names = [r.full_name for r in repos]
+
+    logger.info("Bulk cloning %d repos (timeout=%ds)...", len(repo_names), args.clone_timeout)
+    batch_results = fetcher.clone_batch(repo_names, skip_existing=args.skip_existing)
+
+    logger.info("Cloned %d repos with KiCad pairs, parsing...", len(batch_results))
+
+    raw_samples: list[RealBoardSample] = []
+    n_parsed = 0
+    n_failed = 0
+    n_no_pairs = 0
+    sample_id = 0
+    n_discovered = 0
+
+    # Build lookup from repo_name -> RepoInfo for metadata
+    repo_info_map = {r.full_name: r for r in repos}
+
+    for repo_name, pairs in batch_results.items():
+        n_discovered += len(pairs)
+        repo_info = repo_info_map.get(repo_name)
+        repo_url = repo_info.html_url if repo_info else ""
+        repo_full = repo_info.full_name if repo_info else repo_name
+
+        for pair in pairs:
+            try:
+                result = build_board_graph(
+                    sch_path=pair.schematic_path,
+                    pcb_path=pair.pcb_path,
+                    sample_id=sample_id,
+                    repo_url=repo_url,
+                    repo_name=repo_full,
+                    sch_repo_path=str(pair.schematic_path),
+                    pcb_repo_path=str(pair.pcb_path),
+                )
+
+                if result is None:
+                    n_failed += 1
+                    continue
+
+                raw_samples.append(_graph_result_to_sample(result, sample_id))
+                sample_id += 1
+                n_parsed += 1
+
+            except Exception as e:
+                logger.warning("Failed for %s/%s: %s", repo_name, pair.base_name, e)
+                n_failed += 1
+
+    if not raw_samples:
+        logger.warning("No samples collected from %d repos", len(batch_results))
+        return 0
+
+    # Dedup and quality filter
+    n_before_dedup = len(raw_samples)
+    deduped = dedup_by_hash(raw_samples)
+    n_deduped = len(deduped)
+
+    n_before_filter = len(deduped)
+    filtered = filter_quality(deduped)
+    n_filtered = len(filtered)
+
+    difficulty_counts = dict(Counter(s.difficulty for s in filtered))
+    metadata = {
+        "strategy": f"{args.strategy}-bulk",
+        "n_repos_scanned": len(repos),
+        "n_repos_with_pairs": len(batch_results),
+        "n_discovered": n_discovered,
+        "n_parsed": n_parsed,
+        "n_failed": n_failed,
+        "n_duplicates_removed": n_before_dedup - n_deduped,
+        "n_quality_removed": n_before_filter - n_filtered,
+        "difficulty_counts": difficulty_counts,
+    }
+
+    dataset = RealBoardDataset(samples=filtered, metadata=metadata)
+
+    output_dir = Path(args.output_dir)
+    train_ds, val_ds, test_ds = dataset.split()
+    train_ds.to_jsonl(output_dir / "train.jsonl")
+    val_ds.to_jsonl(output_dir / "val.jsonl")
+    test_ds.to_jsonl(output_dir / "test.jsonl")
+
+    print(f"\n{'='*60}")
+    print(f"Bulk collection complete: {len(dataset)} samples")
+    print(f"  Strategy:      {args.strategy}-bulk")
+    print(f"  Repos scanned: {len(repos)}")
+    print(f"  Repos cloned:  {len(batch_results)} with pairs")
+    print(f"  Discovered:    {n_discovered} file pairs")
+    print(f"  Parsed:        {n_parsed} boards")
+    print(f"  Failed:        {n_failed}")
+    print(f"  Duplicates:    {n_before_dedup - n_deduped} removed")
+    print(f"  Low quality:   {n_before_filter - n_filtered} removed")
+    print(f"  Difficulty:    {difficulty_counts}")
+    print(f"  Splits:        {len(train_ds)} train / {len(val_ds)} val / {len(test_ds)} test")
+    print(f"  Output:        {output_dir}/")
+    print(f"{'='*60}")
+
+    return 0
 
 
 def main() -> int:
@@ -95,6 +217,17 @@ def main() -> int:
         "--skip-existing",
         action="store_true",
         help="Skip repos already present in staging-dir",
+    )
+    parser.add_argument(
+        "--bulk",
+        action="store_true",
+        help="Use git clone --depth 1 instead of Contents API (much faster for large crawls)",
+    )
+    parser.add_argument(
+        "--clone-timeout",
+        type=int,
+        default=120,
+        help="Seconds before git clone times out (default: 120)",
     )
     args = parser.parse_args()
 
@@ -136,7 +269,11 @@ def main() -> int:
         logger.warning("No new repos to process")
         return 0
 
-    # Set up file fetcher
+    # Choose fetch mode
+    if args.bulk:
+        return _run_bulk(args, repos, staging_dir)
+
+    # Set up file fetcher (Contents API mode)
     fetcher = FileFetcher(
         github_client=discovery._client,
         staging_dir=staging_dir,

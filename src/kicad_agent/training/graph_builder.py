@@ -41,15 +41,17 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # KiCad uses date-based version codes in S-expression files.
-# We support versions 7+ (introduced 2023). Older formats (legacy v4/v5/v6)
-# use a different S-expression grammar that kiutils cannot parse reliably.
+# We support versions 6+ (introduced 2021). kiutils handles both v6 and v7+
+# S-expression grammars. Pre-v6 formats use a different grammar that is
+# not reliably parseable.
+KICAD_VERSION_6 = 20211014  # KiCad 6.0
 KICAD_VERSION_7 = 20230101  # KiCad 7.0
 KICAD_VERSION_8 = 20240106  # KiCad 8.0
 KICAD_VERSION_9 = 20241129  # KiCad 9.0
 KICAD_VERSION_10 = 20250114  # KiCad 10.0
 
 # Minimum version we support for parsing
-MIN_KICAD_VERSION = KICAD_VERSION_7
+MIN_KICAD_VERSION = KICAD_VERSION_6
 
 _VERSION_RE = re.compile(r"\(version\s+(\d{8})\)")
 
