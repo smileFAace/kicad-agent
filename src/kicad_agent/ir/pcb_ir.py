@@ -407,8 +407,11 @@ class PcbIR(BaseIR):
         new_fp_indented = "\t" + new_fp_sexpr.replace("\n", "\n\t")
         new_raw = raw_content[:old_fp_start] + new_fp_indented + raw_content[old_fp_end:]
 
-        # Write back directly to disk
-        self._parse_result.file_path.write_text(new_raw, encoding="utf-8")
+        # Write back atomically: write to temp, then rename
+        file_path = self._parse_result.file_path
+        tmp = file_path.with_suffix('.tmp')
+        tmp.write_text(new_raw, encoding="utf-8")
+        tmp.rename(file_path)
         self._raw_written = True
 
         self._record_mutation("update_footprint_from_library", {
