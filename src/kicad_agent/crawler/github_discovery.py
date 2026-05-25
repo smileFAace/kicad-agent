@@ -23,6 +23,11 @@ _DEFAULT_QUERIES: list[str] = [
     "extension:kicad_pcb extension:kicad_sch",
     "topic:kicad",
     "topic:pcb-design",
+    "topic:hardware",
+    "topic:electronics",
+    "kicad_pcb language:html",  # matches repos with KiCad web viewers
+    "pcb kicad stars:>1",
+    "hardware kicad stars:>0",
 ]
 
 
