@@ -5,9 +5,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Tests](https://img.shields.io/badge/tests-918+-green.svg)]()
 
-AI-safe structural editing of KiCad schematic, PCB, symbol library, and footprint files. The LLM never touches raw S-expressions — it emits structured JSON intents, and the Python backend mutates the AST, serializes valid KiCad files, and validates via ERC/DRC gates.
+Structural editing of KiCad schematic, PCB, symbol library, and footprint files. The LLM never directly edits KiCad files — it emits structured JSON intents, and the Python backend mutates the AST, serializes valid output, and validates via ERC/DRC gates.
 
-**LLM -> JSON intent -> AST mutation -> valid KiCad file. Zero corruption, every time.**
+```
+Natural language -> JSON intent -> AST mutation -> ERC/DRC validation -> valid KiCad file
+```
 
 ## Why This Exists
 
@@ -30,14 +32,13 @@ kicad-agent solves this with **constrained structural editing** — the AI emits
 - ADI footprint library: Analog Devices symbol/footprint resolution with ZIP-based cache
 
 **v2.1 (in progress):**
-- Real-world training data from open-source KiCad projects
-- 100K repo crawl: 71K repos discovered, sparse-cloned, parsed into graph training data
+- Real-world training data from open-source KiCad projects (71K repos discovered)
 - Schematic-only graph builder: connectivity from net labels + wires (no PCB required)
 - Domain knowledge corpus: Douglas Self textbooks + DeepSeek visual primitives paper
-- **Fine-tuned PCB reasoning model** (Qwen2.5-0.5B + LoRA, SFT + GRPO on Apple Silicon)
-- `kicad-agent analyze` — local PCB analysis with coordinate-grounded reasoning, no API key needed
+- Fine-tuned PCB reasoning model (Qwen2.5-0.5B + LoRA, SFT + GRPO on Apple Silicon)
+- `kicad-agent analyze` — local PCB analysis, no API key needed
 - AI wiring and net routing
-- Component placement AI with attention-based model
+- Component placement with attention-based model
 - Package distribution (PyPI, docs site)
 - CI/CD pipeline
 
@@ -303,11 +304,7 @@ LLM / CLI
 
 ## Training Data
 
-Training the model on the paper that describes how to train the model. The methodology is the training data. The blueprint is the foundation.
-
-DeepSeek's visual primitives -> our PCB spatial reasoning -> the model that reads the paper about visual primitives to learn how to do spatial reasoning on PCBs.
-
-Turtles all the way down.
+Training data comes from 7 sources: real KiCad projects parsed into connectivity graphs, schematic-only graphs (no PCB required), Douglas Self's *Small Signal Audio Design* and *Audio Power Amplifier Design*, DeepSeek's *Thinking with Visual Primitives* paper, gold-standard routing analysis, and EasyEDA component databases.
 
 | Source | Train | Val | Test | Format |
 |--------|-------|-----|------|--------|
@@ -343,6 +340,8 @@ Qwen2.5-0.5B-Instruct fine-tuned with LoRA (rank=16) on Apple Silicon via mlx-lm
 LocalLLMClient auto-downloads adapters from HuggingFace Hub on first use if no local training output is found.
 
 **Reward model:** Custom neural reward model trained on 14,912 PCB reasoning chains. Scores chains on format quality, reasoning quality, and factual accuracy. 75% discrimination rate between correct and corrupted chains.
+
+One of the training sources is DeepSeek's paper on spatial reasoning — the methodology paper that describes how to train models for coordinate-grounded reasoning. Training the model on the paper that describes how to train the model. Turtles all the way down.
 
 ## Development
 
