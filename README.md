@@ -31,6 +31,11 @@ kicad-agent solves this with **constrained structural editing** — the AI emits
 
 **v2.1 (in progress):**
 - Real-world training data from open-source KiCad projects
+- 100K repo crawl: 71K repos discovered, sparse-cloned, parsed into graph training data
+- Schematic-only graph builder: connectivity from net labels + wires (no PCB required)
+- Domain knowledge corpus: Douglas Self textbooks + DeepSeek visual primitives paper
+- **Fine-tuned PCB reasoning model** (Qwen2.5-0.5B + LoRA, SFT + GRPO on Apple Silicon)
+- `kicad-agent analyze` — local PCB analysis with coordinate-grounded reasoning, no API key needed
 - AI wiring and net routing
 - Component placement AI with attention-based model
 - Package distribution (PyPI, docs site)
@@ -90,6 +95,52 @@ kicad-agent -p /path/to/kicad-project operation.json
 # Verbose output with operation details
 kicad-agent -v operation.json
 ```
+
+### Analyze PCBs with Fine-Tuned Local Model
+
+```bash
+# Analyze any KiCad file — runs locally, no API key needed
+kicad-agent analyze board.kicad_pcb
+kicad-agent analyze schematic.kicad_sch
+
+# Use a specific adapter (GRPO > SFT > base)
+kicad-agent analyze board.kicad_pcb --adapter training_output/grpo/iter_2
+
+# Custom base model
+kicad-agent analyze board.kicad_pcb --model Qwen/Qwen2.5-1.5B-Instruct
+```
+
+Output includes coordinate-grounded spatial analysis with `<point x,y>` tags:
+```
+Board analysis: 85 components across 62 nets on 4-layer PCB.
+Key components (8 of 85): U1 (ATmega328P) at <point 126.7,41.9>; R1 (10k) at <point 118.1,66.1>...
+Connectivity: 62 nets with 140 connections.
+Spatial distribution: medium complexity board...
+Routing assessment: 85 components require 140 trace connections...
+```
+
+### Use in Python
+
+```python
+from kicad_agent.llm.local_client import LocalLLMClient
+
+client = LocalLLMClient()  # auto-detects best adapter
+
+# Analyze a board
+analysis = client.analyze_board(
+    board_name="my-board", n_components=85, n_nets=62,
+    n_layers=4, width_mm=101.52, height_mm=53.34,
+)
+
+# Drop-in replacement for LLMClient (Anthropic-compatible)
+result = client.create_message(
+    system="You are a PCB design expert.",
+    messages=[{"role": "user", "content": "Analyze my board"}],
+)
+print(result.content[0].text)
+```
+
+No API key required. Runs on Apple Silicon GPU (~5 GB memory, ~3s per analysis).
 
 ## Claude Code Skill
 
@@ -237,7 +288,7 @@ LLM / CLI
 | `kicad_agent.training` | GRPO reinforcement learning pipeline with neural reward model |
 | `kicad_agent.project` | Project-level operations and Analog Devices footprint library |
 | `kicad_agent.placement` | Attention-based component placement with hybrid ML/geometric engine |
-| `kicad_agent.llm` | LLM integration for design critique, error fixing, and intent parsing |
+| `kicad_agent.llm` | LLM integration: Anthropic client, local fine-tuned inference (LocalLLMClient), design critique, intent parsing |
 | `kicad_agent.handler` | Operation validation, execution, and result formatting |
 | `kicad_agent.cli` | Terminal interface with schema export, dry-run, and verbose modes |
 
@@ -249,6 +300,47 @@ LLM / CLI
 - **Round-trip fidelity** — Parse -> modify -> serialize produces byte-identical or semantically equivalent output.
 - **UUID integrity** — UUIDs are extracted before parsing and re-injected after serialization to preserve references.
 - **Atomic operations** — One mutation per operation, one target file per operation. No compound operations.
+
+## Training Data
+
+Training the model on the paper that describes how to train the model. The methodology is the training data. The blueprint is the foundation.
+
+DeepSeek's visual primitives -> our PCB spatial reasoning -> the model that reads the paper about visual primitives to learn how to do spatial reasoning on PCBs.
+
+Turtles all the way down.
+
+| Source | Train | Val | Test | Format |
+|--------|-------|-----|------|--------|
+| PCB graphs (sch+pcb pairs) | 168 | 21 | 21 | `graph_json`, spatial |
+| Schematic-only graphs | 3,218 | 402 | 403 | `graph_json`, spatial |
+| Textbook knowledge (Self x2 + DeepSeek) | 926 | 115 | 117 | `content`, chapters |
+| 100K crawl (in progress) | growing | — | — | `graph_json`, spatial |
+| Gold standard routing | 100 | 13 | 13 | routing features, RES scores |
+| EasyEDA components | 2,000 | 250 | 250 | pin maps, packages |
+
+**SFT fine-tuning data:** 7,441 ChatML samples from all 7 sources, quality-filtered by reward model (bottom 25th percentile removed). Split into 6,696 train / 372 val / 373 test.
+
+**Textbooks:**
+- *Small Signal Audio Design* (Douglas Self, 2010) — 360 chunks, 20 chapters: op-amps, noise, filters, preamps, mixers
+- *Audio Power Amplifier Design* (Douglas Self, 2013) — 551 chunks, 41 chapters: power amp classes, distortion, thermal, layout
+- *Thinking with Visual Primitives* (DeepSeek-AI, 2025) — 15 chunks: spatial reasoning architecture, coordinate-grounded chains
+
+**Graph data:** Component connectivity graphs from real KiCad projects. PCB graphs include spatial coordinates from footprints; schematic graphs use net labels + wire union-find for connectivity without requiring a PCB layout.
+
+**100K crawl:** 71,431 repos discovered via multi-strategy GitHub search (GraphQL, REST, code search, curated orgs, fork amplification). Sparse-cloned with `--depth 1 --filter=blob:none --sparse`, pre-filtered via tree API, parsed into training samples.
+
+### Fine-Tuned Model
+
+Qwen2.5-0.5B-Instruct fine-tuned with LoRA (rank=16) on Apple Silicon via mlx-lm:
+
+| Stage | Method | Samples | Iters | Loss | Notes |
+|-------|--------|---------|-------|------|-------|
+| SFT | Supervised fine-tuning | 6,696 | 1,000 | 2.20 -> 0.69 | ChatML, reward-filtered |
+| GRPO | Rejection sampling (ReST) | 200/gen round | 500/round | 0.46 -> 0.28 | 2 iterations, top-50% filter |
+
+**Adapters:** `training_output/sft/` (SFT), `training_output/grpo/iter_2/` (GRPO, best)
+
+**Reward model:** Custom neural reward model trained on 14,912 PCB reasoning chains. Scores chains on format quality, reasoning quality, and factual accuracy. 75% discrimination rate between correct and corrupted chains.
 
 ## Development
 
@@ -271,7 +363,7 @@ mypy src/
 
 ## Project Status
 
-v2.0 complete. v2.1 (production-ai) in progress. 918+ tests passing.
+v2.0 complete. v2.1 (production-ai) phases 13-22 complete. 918+ tests passing.
 
 | Phase | Description | Status |
 |-------|-------------|--------|
@@ -287,7 +379,10 @@ v2.0 complete. v2.1 (production-ai) in progress. 918+ tests passing.
 | 10 | AI-driven PCB generation (templates, LLM critique, manufacturing) | Complete |
 | 11 | LTspice integration (.asc parser, simulation, waveform analysis) | Complete |
 | 12 | ADI footprint library (symbol/footprint resolution, cache) | Complete |
-| 13-19 | v2.1 production-ai phases (in progress) | In Progress |
+| 13-19 | v2.1 production-ai phases (training data, crawling, parsing) | Complete |
+| 20 | SFT fine-tuning (data prep + mlx-lm LoRA training) | Complete |
+| 21 | GRPO RL fine-tuning (ReST rejection sampling) | Complete |
+| 22 | Agent integration (local inference, `analyze` CLI) | Complete |
 
 ## License
 

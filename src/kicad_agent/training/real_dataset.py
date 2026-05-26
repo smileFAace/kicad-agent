@@ -25,6 +25,9 @@ from kicad_agent.training.graph_builder import (
     detect_kicad_version,
     is_likely_parseable,
 )
+from kicad_agent.training.schematic_graph_builder import (
+    SchematicGraphResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +82,7 @@ class RealBoardSample:
     board_hash: str
     graph_json: str
     spatial_summary_json: str
+    source_format: str = "kicad_pcb"  # "kicad_pcb" or "kicad_sch"
 
 
 @dataclass
@@ -202,6 +206,7 @@ def _sample_to_dict(s: RealBoardSample) -> dict:
         "board_hash": s.board_hash,
         "graph_json": s.graph_json,
         "spatial_summary_json": s.spatial_summary_json,
+        "source_format": s.source_format,
     }
 
 
@@ -222,6 +227,7 @@ def _dict_to_sample(d: dict) -> RealBoardSample:
         board_hash=d["board_hash"],
         graph_json=d["graph_json"],
         spatial_summary_json=d["spatial_summary_json"],
+        source_format=d.get("source_format", "kicad_pcb"),
     )
 
 
@@ -324,6 +330,36 @@ def _graph_result_to_sample(result: BoardGraphResult, sample_id: int) -> RealBoa
         board_hash=result.board_hash,
         graph_json=result.graph_json,
         spatial_summary_json=result.spatial_summary_json,
+        source_format="kicad_pcb",
+    )
+
+
+def _schematic_result_to_sample(result: SchematicGraphResult, sample_id: int) -> RealBoardSample:
+    """Convert a SchematicGraphResult to a RealBoardSample.
+
+    Args:
+        result: SchematicGraphResult from schematic_graph_builder.
+        sample_id: Sequential sample index.
+
+    Returns:
+        RealBoardSample with schematic-only fields.
+    """
+    return RealBoardSample(
+        sample_id=sample_id,
+        repo_url=result.repo_url,
+        repo_name=result.repo_name,
+        schematic_path=result.schematic_path,
+        pcb_path=result.pcb_path,
+        component_count=result.component_count,
+        net_count=result.net_count,
+        layer_count=result.layer_count,
+        board_width_mm=result.board_width_mm,
+        board_height_mm=result.board_height_mm,
+        difficulty=result.difficulty,
+        board_hash=result.board_hash,
+        graph_json=result.graph_json,
+        spatial_summary_json=result.spatial_summary_json,
+        source_format="kicad_sch",
     )
 
 

@@ -15,6 +15,7 @@ Usage:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from kicad_agent.training.tokenizer import ChainTokenizer
@@ -220,6 +221,65 @@ class RewardModel:
         self._tokenizer = tokenizer
         # Force rebuild with new vocab size
         self._model = None
+
+    @classmethod
+    def load_trained(
+        cls,
+        model_dir: str | Path,
+        device: str = "auto",
+    ) -> RewardModel:
+        """Load a trained reward model + tokenizer from disk.
+
+        Args:
+            model_dir: Directory containing reward_model.pt and tokenizer.json.
+            device: "cpu", "mps", "cuda", or "auto" (auto-detect).
+
+        Returns:
+            RewardModel ready for inference via predict_reward().
+
+        Raises:
+            FileNotFoundError: If model or tokenizer files are missing.
+        """
+        import json as _json
+
+        path = Path(model_dir)
+        model_file = path / "reward_model.pt"
+        tok_file = path / "tokenizer.json"
+
+        if not model_file.exists():
+            raise FileNotFoundError(f"No model found: {model_file}")
+        if not tok_file.exists():
+            raise FileNotFoundError(f"No tokenizer found: {tok_file}")
+
+        # Auto-detect device
+        if device == "auto":
+            device = "cpu"
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    device = "cuda"
+                elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                    device = "mps"
+            except ImportError:
+                pass
+
+        # Reconstruct tokenizer from saved vocab
+        tok_data = _json.loads(tok_file.read_text())
+        tokenizer = ChainTokenizer(vocab_size=tok_data.get("vocab_size", 8000))
+        tokenizer.token_to_id = tok_data["token_to_id"]
+        tokenizer.id_to_token = {int(v): k for k, v in tokenizer.token_to_id.items()}
+        tokenizer._trained = True
+
+        # Build model and load weights
+        rm = cls(device=device)
+        rm.set_tokenizer(tokenizer)
+
+        import torch
+        state_dict = torch.load(model_file, map_location=device, weights_only=True)
+        rm.model.load_state_dict(state_dict)
+        rm.model.eval()
+
+        return rm
 
     @property
     def is_available(self) -> bool:

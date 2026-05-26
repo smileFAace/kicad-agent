@@ -34,6 +34,58 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 ## Phase Details
 
+### Phase 20: SFT Data Preparation + Training Infrastructure
+**Goal**: Convert 15K training chains to instruction format, quality-filter with reward model, and train SFT baseline on Qwen2.5-1.5B with QLoRA
+**Depends on**: Phase 9 (reward model), Phase 13 (real-world training data)
+**Requirements**: LLM-01, LLM-02, LLM-03, LLM-04
+**Success Criteria** (what must be TRUE):
+  1. 15K chains converted to ChatML instruction format with task-specific prompt templates
+  2. Bottom quartile filtered out using reward model scoring (retain ~11K high-quality samples)
+  3. SFT training completes on Qwen2.5-1.5B with QLoRA (4-bit on consumer hardware or MPS)
+  4. SFT model generates valid PCB reasoning chains on held-out test set
+  5. SFT model scores higher than base model on reward model evaluation
+**Plans**: 3 plans
+**Council review gate**: After SFT training, before GRPO
+
+Plans:
+- [ ] 20-01-PLAN.md -- Convert 15K chains to ChatML instruction format + reward model quality filter (LLM-01, LLM-02)
+- [ ] 20-02-PLAN.md -- HuggingFace QLoRA training infrastructure + SFT baseline training on Qwen2.5-1.5B (LLM-03, LLM-04)
+- [ ] 20-03-PLAN.md -- SFT evaluation + Council review gate
+
+### Phase 21: GRPO RL Fine-Tuning
+**Goal**: Fine-tune SFT model using GRPO with the trained reward model as critic — the model learns to generate chains that score highest on (format, quality, accuracy)
+**Depends on**: Phase 20 (SFT baseline), Phase 9 (reward model)
+**Requirements**: LLM-05, LLM-06, LLM-07, LLM-08
+**Success Criteria** (what must be TRUE):
+  1. GRPO loop generates N chains per sample, scores with reward model, computes group advantages
+  2. Policy updates via PPO-clip with KL divergence penalty
+  3. GRPO model achieves >85% discrimination rate (up from 75% SFT baseline)
+  4. GRPO model scores higher than SFT on all three reward dimensions
+**Plans**: 2 plans
+**Council review gate**: After GRPO training, before agent integration
+
+Plans:
+- [ ] 21-01-PLAN.md -- GRPO training loop implementation (generate → score → update) (LLM-05, LLM-06)
+- [ ] 21-02-PLAN.md -- GRPO training run + evaluation + Council review gate (LLM-07, LLM-08)
+
+### Phase 22: Agent Integration + End-to-End Evaluation
+**Goal**: Wire the GRPO-trained LLM into kicad-agent as its reasoning engine with best-of-N generation and reward model quality gate
+**Depends on**: Phase 21 (GRPO model), Phase 7 (GSD skill integration)
+**Requirements**: LLM-09, LLM-10, LLM-11, LLM-12
+**Success Criteria** (what must be TRUE):
+  1. Fine-tuned model loads and generates chains in <2s per chain on MPS
+  2. Best-of-N (N=4) picks chains scoring 20%+ higher than single-sample
+  3. kicad-agent CLI has `analyze` subcommand using the fine-tuned model
+  4. Python API exposes `generate_analysis(pcb_path)` returning scored chains
+  5. GSD Skill: Claude can invoke `/kicad-agent analyze <pcb>` and get spatial reasoning
+  6. End-to-end demo: analyze HackRF One and produce quality reasoning chain
+**Plans**: 2 plans
+**Council review gate**: Final review after integration
+
+Plans:
+- [ ] 22-01-PLAN.md -- Inference wrapper + best-of-N + kicad-agent wiring (LLM-09, LLM-10, LLM-11)
+- [ ] 22-02-PLAN.md -- End-to-end evaluation + Council review + documentation (LLM-12)
+
 ### Phase 1: Foundation -- Parse, Serialize, Round-trip
 **Goal**: All four KiCad file types parse into structured AST and serialize back to byte-identical or semantically equivalent output
 **Depends on**: Nothing (first phase)
@@ -399,3 +451,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 17. Package & Distribution | 3/3 | Complete | 2026-05-24 |
 | 18. CI/CD Pipeline | 1/2 | In Progress | |
 | 19. Interactive Routing Suggestions | 3/3 | Complete | 2026-05-24 |
+| 20. SFT Data Preparation + Training Infrastructure | 0/3 | Pending | |
+| 21. GRPO RL Fine-Tuning | 0/2 | Pending | |
+| 22. Agent Integration + End-to-End Evaluation | 0/2 | Pending | |

@@ -492,6 +492,44 @@ class GithubDiscovery:
         logger.info("Fork scan found %d additional repos", len(results))
         return results
 
+    def find_schematic_files(self, repo_info: RepoInfo) -> list[str]:
+        """Find all .kicad_sch files in a repo (not just matched pairs).
+
+        Uses GitHub Git Tree API to list all schematic files. Useful for
+        collecting unmatched schematics for schematic-only training data.
+
+        Args:
+            repo_info: RepoInfo identifying the target repository.
+
+        Returns:
+            List of repo-relative paths to .kicad_sch files.
+        """
+        try:
+            repo = self._client.get_repo(repo_info.full_name)
+            self._rate_limiter.wait_if_needed("core")
+
+            tree = repo.get_git_tree(repo_info.default_branch, recursive=True)
+
+            schematics: list[str] = []
+            for element in tree.tree:
+                if element.type != "blob":
+                    continue
+                if element.path.endswith(".kicad_sch"):
+                    schematics.append(element.path)
+
+            return schematics
+
+        except GithubException as e:
+            logger.warning(
+                "Failed to get tree for %s: %s", repo_info.full_name, e
+            )
+            return []
+        except Exception as e:
+            logger.warning(
+                "Unexpected error processing %s: %s", repo_info.full_name, e
+            )
+            return []
+
     def discover_from_code_search(
         self,
         max_repos: int = 2000,

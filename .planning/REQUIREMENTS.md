@@ -166,6 +166,33 @@ On-demand fetching of ADI manufacturer footprints, symbols, and 3D models into K
 - [ ] **ADI-03**: .kicad_sym symbol files download from SamacSys (or user-provided ZIP), validate for KiCad format, and import into local symbol library registered in sym-lib-table
 - [x] **ADI-04**: Library cache with JSON manifest prevents re-downloading previously fetched parts; cache persists across sessions and supports both automated and manual imports
 
+### LLM Fine-Tuning (Phase 20)
+
+SFT data preparation and supervised fine-tuning of a small LLM for PCB spatial reasoning.
+
+- [ ] **LLM-01**: 15K training chains converted to ChatML instruction format with task-specific prompt templates (board analysis, routing assessment, spatial reasoning, component knowledge)
+- [ ] **LLM-02**: Reward model quality filter scores all chains and removes bottom quartile (retain ~11K high-quality samples)
+- [ ] **LLM-03**: QLoRA training infrastructure set up with HuggingFace transformers, 4-bit quantization, LoRA adapters (rank=16, alpha=32)
+- [ ] **LLM-04**: SFT training on Qwen2.5-1.5B-Instruct completes with measurable improvement over base model on held-out test chains
+
+### GRPO RL Fine-Tuning (Phase 21)
+
+Reinforcement learning fine-tuning using the reward model as critic.
+
+- [ ] **LLM-05**: GRPO training loop generates N chains per sample, scores with reward model, computes group-relative advantages
+- [ ] **LLM-06**: Policy updates via PPO-clip with KL divergence penalty prevent catastrophic forgetting
+- [ ] **LLM-07**: GRPO model achieves >85% discrimination rate (correct > corrupted) on held-out test set (up from 75% baseline)
+- [ ] **LLM-08**: GRPO model scores higher than SFT baseline on all three reward dimensions (format, quality, accuracy)
+
+### Agent Integration (Phase 22)
+
+Wire the fine-tuned model into kicad-agent as its reasoning engine.
+
+- [ ] **LLM-09**: Inference wrapper loads GRPO model and generates PCB reasoning chains in <2s per chain on MPS
+- [ ] **LLM-10**: Best-of-N selection (N=4) picks chains scoring 20%+ higher than single-sample generation
+- [ ] **LLM-11**: kicad-agent CLI `analyze` subcommand and Python API `generate_analysis(pcb_path)` expose fine-tuned model
+- [ ] **LLM-12**: GSD Skill integration: Claude invokes `/kicad-agent analyze <pcb>` and receives scored spatial reasoning chain
+
 ## Out of Scope
 
 | Feature | Reason |
@@ -293,6 +320,18 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ROUTE-02 | Phase 19: Interactive Routing Suggestions | Complete | 19-01 |
 | ROUTE-03 | Phase 19: Interactive Routing Suggestions | Complete | 19-02 |
 | ROUTE-04 | Phase 19: Interactive Routing Suggestions | Complete | 19-03 |
+| LLM-01 | Phase 20: SFT Data Preparation | Pending | 20-01 |
+| LLM-02 | Phase 20: SFT Data Preparation | Pending | 20-01 |
+| LLM-03 | Phase 20: SFT Data Preparation | Pending | 20-02 |
+| LLM-04 | Phase 20: SFT Data Preparation | Pending | 20-02 |
+| LLM-05 | Phase 21: GRPO RL Fine-Tuning | Pending | 21-01 |
+| LLM-06 | Phase 21: GRPO RL Fine-Tuning | Pending | 21-01 |
+| LLM-07 | Phase 21: GRPO RL Fine-Tuning | Pending | 21-02 |
+| LLM-08 | Phase 21: GRPO RL Fine-Tuning | Pending | 21-02 |
+| LLM-09 | Phase 22: Agent Integration | Pending | 22-01 |
+| LLM-10 | Phase 22: Agent Integration | Pending | 22-01 |
+| LLM-11 | Phase 22: Agent Integration | Pending | 22-01 |
+| LLM-12 | Phase 22: Agent Integration | Pending | 22-02 |
 
 **Coverage:**
 - Total requirements: 98 (44 v1 + 8 Phase 8 + 7 Phase 9 + 12 Phase 10 + 5 Phase 11 + 4 Phase 12 + 5 Phase 13 + 4 Phase 14 + 5 Phase 16 + 4 Phase 19)

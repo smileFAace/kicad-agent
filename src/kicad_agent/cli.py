@@ -34,7 +34,7 @@ from pathlib import Path
 from kicad_agent.handler import format_result, handle_operation, validate_operation
 from kicad_agent.ops.schema import get_operation_schema
 
-_SUBCOMMANDS = {"collect", "erc", "drc", "export", "context", "route"}
+_SUBCOMMANDS = {"collect", "erc", "drc", "export", "context", "route", "analyze"}
 
 
 def _build_operation_parser() -> argparse.ArgumentParser:
@@ -407,6 +407,106 @@ def _handle_route(argv: list[str]) -> None:
     sys.exit(0)
 
 
+def _build_analyze_parser() -> argparse.ArgumentParser:
+    """Parser for the 'analyze' subcommand — local PCB reasoning."""
+    parser = argparse.ArgumentParser(
+        prog="kicad-agent analyze",
+        description="Analyze a PCB or schematic using the fine-tuned local model.",
+    )
+    parser.add_argument(
+        "file",
+        type=Path,
+        help="Path to .kicad_pcb or .kicad_sch file.",
+    )
+    parser.add_argument(
+        "--adapter",
+        type=Path,
+        default=None,
+        help="LoRA adapter directory (default: auto-detect GRPO > SFT).",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Base model (default: Qwen/Qwen2.5-0.5B-Instruct).",
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=1024,
+        help="Max generation tokens (default: 1024).",
+    )
+    return parser
+
+
+def _handle_analyze(argv: list[str]) -> None:
+    """Handle the 'analyze' subcommand."""
+    parser = _build_analyze_parser()
+    args = parser.parse_args(argv)
+
+    if not args.file.exists():
+        print(f"Error: file not found: {args.file}", file=sys.stderr)
+        sys.exit(1)
+
+    # Parse the file to extract board stats
+    file_path = args.file
+    suffix = file_path.suffix.lower()
+    board_name = file_path.stem
+    n_components = 0
+    n_nets = 0
+    n_layers = 4
+    width_mm = 0.0
+    height_mm = 0.0
+
+    try:
+        if suffix == ".kicad_pcb":
+            from kicad_agent.parser.pcb_parser import parse_pcb
+            pcb = parse_pcb(str(file_path.resolve()))
+            n_components = len(pcb.modules)
+            n_nets = len(pcb.nets)
+            # Try to get board dimensions
+            try:
+                from kicad_agent.training.graph_builder import _extract_board_dims
+                width_mm, height_mm = _extract_board_dims(pcb)
+            except Exception:
+                pass
+        elif suffix == ".kicad_sch":
+            from kicad_agent.parser.schematic_parser import parse_schematic
+            sch = parse_schematic(str(file_path.resolve()))
+            comps = sch.get_components()
+            n_components = len(comps)
+            n_nets = len(sch.get_nets())
+    except Exception as e:
+        print(f"Warning: Could not parse file ({e}), using defaults.", file=sys.stderr)
+
+    # Run local inference
+    from kicad_agent.llm.local_client import LocalLLMClient
+
+    client = LocalLLMClient(
+        model=args.model,
+        adapter_dir=args.adapter,
+        max_tokens=args.max_tokens,
+    )
+
+    print(f"Analyzing {file_path.name}...")
+    print(f"  Components: {n_components}, Nets: {n_nets}, Layers: {n_layers}")
+    if width_mm > 0:
+        print(f"  Board size: {width_mm:.1f} x {height_mm:.1f} mm")
+    print(f"  Model: {client.model}")
+    print(f"  Adapter: {client.adapter_path}")
+    print()
+
+    analysis = client.analyze_board(
+        board_name=board_name,
+        n_components=n_components,
+        n_nets=n_nets,
+        n_layers=n_layers,
+        width_mm=width_mm,
+        height_mm=height_mm,
+        source=str(file_path),
+    )
+    print(analysis)
+
+
 def main(argv: list[str] | None = None) -> None:
     """Entry point for the kicad-agent CLI."""
     if argv is None:
@@ -428,6 +528,8 @@ def main(argv: list[str] | None = None) -> None:
             _handle_context(subcmd_argv)
         elif subcmd == "route":
             _handle_route(subcmd_argv)
+        elif subcmd == "analyze":
+            _handle_analyze(subcmd_argv)
         return
 
     # Legacy operation mode
