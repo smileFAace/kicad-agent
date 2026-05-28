@@ -227,6 +227,71 @@ Replicate a component in a linear, circular, or matrix array pattern.
 
 ---
 
+#### embed_symbol
+
+Embed a symbol definition from a .kicad_sym library file into a schematic's lib_symbols section. Required before a symbol can be referenced by components in the schematic. If the symbol already exists (matching libId), the operation is a no-op.
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op_type` | string | Must be `"embed_symbol"` |
+| `target_file` | string | Relative path to .kicad_sch file |
+| `lib_id` | string | Library:symbol ID to embed, e.g. `"Analog-Ecosystem-SMD:RP2350B"` (1-256 chars) |
+| `library_path` | string | Relative path to .kicad_sym library file (from schematic's directory) |
+
+**Example:**
+
+```json
+{
+  "root": {
+    "op_type": "embed_symbol",
+    "target_file": "mcu-core.kicad_sch",
+    "lib_id": "Analog-Ecosystem-SMD:RP2350B",
+    "library_path": "../../shared/symbols/Analog-Ecosystem-SMD.kicad_sym"
+  }
+}
+```
+
+---
+
+#### swap_symbol
+
+Swap a component's symbol (lib_id) in-place, preserving position and properties. Optionally auto-embeds the new symbol definition from a library file. Wire connections are not affected (they reference UUIDs, not symbol types).
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op_type` | string | Must be `"swap_symbol"` |
+| `target_file` | string | Relative path to .kicad_sch file |
+| `reference` | string | Component reference designator, e.g. `"U1"` (1-64 chars) |
+| `new_lib_id` | string | New library:symbol ID, e.g. `"Analog-Ecosystem-SMD:RP2350B"` (1-256 chars) |
+
+**Optional fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `library_path` | string | `null` | Path to .kicad_sym for auto-embedding (from schematic's directory) |
+| `preserve_position` | boolean | `true` | Keep component's current (at X Y) coordinates |
+| `preserve_properties` | boolean | `true` | Keep component's current properties (Value, Footprint, etc.) |
+
+**Example:**
+
+```json
+{
+  "root": {
+    "op_type": "swap_symbol",
+    "target_file": "mcu-core.kicad_sch",
+    "reference": "U1",
+    "new_lib_id": "Analog-Ecosystem-SMD:RP2350B",
+    "library_path": "../../shared/symbols/Analog-Ecosystem-SMD.kicad_sym"
+  }
+}
+```
+
+---
+
 ### Net Operations
 
 #### add_net
@@ -1526,6 +1591,8 @@ Net names and bus names reject whitespace-only strings. If a name is `"   "` (sp
 | `add_power_flag` | sch | target_file, erc_report_path |
 | `place_no_connects_from_erc` | sch | target_file, erc_report_path |
 | `rebuild_root_sheet` | sch | target_file |
+| `embed_symbol` | sch | target_file, lib_id, library_path |
+| `swap_symbol` | sch | target_file, reference, new_lib_id |
 
 ---
 

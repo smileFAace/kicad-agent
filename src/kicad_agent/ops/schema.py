@@ -1306,6 +1306,92 @@ class CreateSymbolOp(BaseModel):
         return _validate_safe_identifier(v, "reference_prefix")
 
 
+class EmbedSymbolOp(BaseModel):
+    """Embed a symbol definition from a .kicad_sym library into a schematic's lib_symbols.
+
+    Extracts the symbol definition from the specified library file and injects it
+    into the schematic's embedded lib_symbols section. This is required before a
+    symbol can be used in the schematic (KiCad resolves symbols from lib_symbols first).
+
+    If the symbol already exists in the schematic's lib_symbols (same libId), the
+    operation is a no-op and returns success.
+
+    Attributes:
+        op_type: Discriminator literal ``"embed_symbol"``.
+        target_file: Relative path to the .kicad_sch file.
+        lib_id: Library ID of the symbol to embed (e.g. ``"Analog-Ecosystem-SMD:RP2350B"``).
+        library_path: Relative path to the .kicad_sym library file containing the symbol.
+    """
+
+    op_type: Literal["embed_symbol"] = "embed_symbol"
+    target_file: TargetFile
+    lib_id: str = Field(
+        min_length=1, max_length=256,
+        description="Library:symbol ID to embed (e.g. 'Library:SymbolName')",
+    )
+    library_path: str = Field(
+        min_length=1, max_length=512,
+        description="Relative path to .kicad_sym library file",
+    )
+
+    @field_validator("lib_id")
+    @classmethod
+    def _validate_lib_id(cls, v: str) -> str:
+        return _validate_safe_identifier(v, "lib_id")
+
+
+class SwapSymbolOp(BaseModel):
+    """Swap a component's symbol (lib_id) in-place, preserving position and properties.
+
+    Replaces the component's lib_id reference with a new one. Optionally embeds
+    the new symbol definition from the library into the schematic's lib_symbols
+    section if it's not already present.
+
+    The component's Reference, Value, position, and other properties are preserved.
+    Wire connections are not affected (they reference UUIDs, not symbol types).
+
+    Attributes:
+        op_type: Discriminator literal ``"swap_symbol"``.
+        target_file: Relative path to the .kicad_sch file.
+        reference: Reference designator of the component to swap (e.g. ``"U1"``).
+        new_lib_id: New library:symbol ID (e.g. ``"Analog-Ecosystem-SMD:RP2350B"``).
+        library_path: Optional path to .kicad_sym for auto-embedding. If provided,
+            the symbol definition will be embedded into lib_symbols if missing.
+        preserve_position: Keep the component's current (at X Y) coordinates.
+        preserve_properties: Keep the component's current properties (Value, Footprint, etc.).
+    """
+
+    op_type: Literal["swap_symbol"] = "swap_symbol"
+    target_file: TargetFile
+    reference: str = Field(min_length=1, max_length=64)
+    new_lib_id: str = Field(
+        min_length=1, max_length=256,
+        description="New library:symbol ID (e.g. 'Library:SymbolName')",
+    )
+    library_path: Optional[str] = Field(
+        default=None, max_length=512,
+        description="Optional path to .kicad_sym for auto-embedding",
+    )
+    preserve_position: bool = Field(
+        default=True,
+        description="Keep the component's current position",
+    )
+    preserve_properties: bool = Field(
+        default=True,
+        description="Keep the component's current properties",
+    )
+
+    @field_validator("reference")
+    @classmethod
+    def _validate_reference(cls, v: str) -> str:
+        return _validate_safe_identifier(v, "reference")
+
+    @field_validator("new_lib_id")
+    @classmethod
+    def _validate_new_lib_id(cls, v: str) -> str:
+        return _validate_safe_identifier(v, "new_lib_id")
+
+
 # ---------------------------------------------------------------------------
 # Discriminated union (D-01, D-02, D-03)
 # ---------------------------------------------------------------------------
@@ -1366,7 +1452,9 @@ class Operation(BaseModel):
         | CreateSchematicOp
         | CreatePcbOp
         | CreateProjectOp
-        | CreateSymbolOp,
+        | CreateSymbolOp
+        | EmbedSymbolOp
+        | SwapSymbolOp,
         Field(discriminator="op_type"),
     ]
 

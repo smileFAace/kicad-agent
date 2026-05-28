@@ -330,6 +330,18 @@ def _handle_rebuild_root_sheet(op: Any, ir: SchematicIR, file_path: Path) -> dic
     }
 
 
+@register_schematic("embed_symbol")
+def _handle_embed_symbol(op: Any, ir: SchematicIR, file_path: Path) -> dict[str, Any]:
+    from kicad_agent.ops.swap_symbol import embed_symbol
+    return embed_symbol(op, ir, file_path)
+
+
+@register_schematic("swap_symbol")
+def _handle_swap_symbol(op: Any, ir: SchematicIR, file_path: Path) -> dict[str, Any]:
+    from kicad_agent.ops.swap_symbol import swap_symbol
+    return swap_symbol(op, ir, file_path)
+
+
 # ---------------------------------------------------------------------------
 # PCB handler implementations
 # ---------------------------------------------------------------------------
