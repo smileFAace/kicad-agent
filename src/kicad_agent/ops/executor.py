@@ -319,6 +319,17 @@ def _handle_add_power_flag(op: Any, ir: SchematicIR, file_path: Path) -> dict[st
     return add_power_flags(ir, file_path)
 
 
+@register_schematic("rebuild_root_sheet")
+def _handle_rebuild_root_sheet(op: Any, ir: SchematicIR, file_path: Path) -> dict[str, Any]:
+    import dataclasses
+    from kicad_agent.ops.root_sheet import rebuild_root_sheet
+    results = rebuild_root_sheet(file_path)
+    return {
+        "sheets_processed": len(results),
+        "details": [dataclasses.asdict(r) for r in results],
+    }
+
+
 # ---------------------------------------------------------------------------
 # PCB handler implementations
 # ---------------------------------------------------------------------------

@@ -27,7 +27,7 @@ from kicad_agent.validation.format_check import validate_kicad10_format
 # Fixture loading helper
 # ---------------------------------------------------------------------------
 
-FIXTURE_PATH = Path("tests/fixtures/kicad6_test.kicad_sch")
+FIXTURE_PATH = Path("tests/data/kicad6_test.kicad_sch")
 
 
 # ---------------------------------------------------------------------------

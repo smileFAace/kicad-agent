@@ -1118,6 +1118,21 @@ class AddPowerFlagOp(BaseModel):
     target_file: TargetFile
 
 
+class RebuildRootSheetOp(BaseModel):
+    """Rebuild root schematic sheet pins from sub-sheet hierarchical labels.
+
+    SCHREPAIR-08: Reads all sub-sheets, extracts hierarchical labels,
+    and regenerates sheet pins with correct positioning.
+
+    Attributes:
+        op_type: Discriminator literal ``"rebuild_root_sheet"``.
+        target_file: Relative path to the root KiCad schematic file (H-01 validated).
+    """
+
+    op_type: Literal["rebuild_root_sheet"] = "rebuild_root_sheet"
+    target_file: TargetFile
+
+
 class AddCopperZoneOp(BaseModel):
     """Add a copper zone/ground pour to a PCB.
 
@@ -1343,6 +1358,7 @@ class Operation(BaseModel):
         | ConvertKicad6To10Op
         | SnapToGridOp
         | AddPowerFlagOp
+        | RebuildRootSheetOp
         | AddCopperZoneOp
         | SetBoardOutlineOp
         | AssignNetClassOp
