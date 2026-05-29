@@ -15,6 +15,7 @@ Usage:
     result = executor.execute(op)
 """
 
+import dataclasses
 import logging
 from pathlib import Path
 from typing import Any, Callable
@@ -300,7 +301,6 @@ def _handle_validate_schematic(op: Any, ir: SchematicIR, file_path: Path) -> dic
 
 @register_schematic("parse_erc")
 def _handle_parse_erc(op: Any, ir: SchematicIR, file_path: Path) -> dict[str, Any]:
-    import dataclasses
     from kicad_agent.ops.erc_parser import parse_erc
     violations = parse_erc(file_path)
     return {"violations": [dataclasses.asdict(v) for v in violations]}
@@ -308,7 +308,6 @@ def _handle_parse_erc(op: Any, ir: SchematicIR, file_path: Path) -> dict[str, An
 
 @register_schematic("extract_violation_positions")
 def _handle_extract_violation_positions(op: Any, ir: SchematicIR, file_path: Path) -> dict[str, Any]:
-    import dataclasses
     from kicad_agent.ops.erc_parser import extract_violation_positions
     positions = extract_violation_positions(file_path, op.violation_type)
     return {"positions": [dataclasses.asdict(p) for p in positions], "count": len(positions)}
@@ -316,7 +315,6 @@ def _handle_extract_violation_positions(op: Any, ir: SchematicIR, file_path: Pat
 
 @register_schematic("validate_hlabels")
 def _handle_validate_hlabels(op: Any, ir: SchematicIR, file_path: Path) -> dict[str, Any]:
-    import dataclasses
     from kicad_agent.ops.hlabel_guard import validate_hlabels
     expected = set(op.expected_labels) if op.expected_labels else None
     result = validate_hlabels(ir, expected_labels=expected)
@@ -346,7 +344,6 @@ def _handle_add_power_flag(op: Any, ir: SchematicIR, file_path: Path) -> dict[st
 
 @register_schematic("rebuild_root_sheet")
 def _handle_rebuild_root_sheet(op: Any, ir: SchematicIR, file_path: Path) -> dict[str, Any]:
-    import dataclasses
     from kicad_agent.ops.root_sheet import rebuild_root_sheet
     results = rebuild_root_sheet(file_path)
     return {

@@ -28,15 +28,6 @@ TASK_TEMPLATES: dict[str, str] = {
     "spatial_reasoning": (
         "Perform a spatial analysis of this PCB routing problem:\n{context}"
     ),
-    "board_analysis": (
-        "Analyze the PCB board layout and provide spatial reasoning:\n{context}"
-    ),
-    "routing_assessment": (
-        "Assess the routing requirements for this PCB design:\n{context}"
-    ),
-    "component_knowledge": (
-        "Provide technical analysis of this PCB component:\n{context}"
-    ),
 }
 
 

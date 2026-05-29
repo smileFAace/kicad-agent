@@ -31,20 +31,18 @@ class ScoredChain:
 def best_of_n_select(
     chains: list[str],
     reward_model: object | None,
-    n_complete: int | None = None,
 ) -> ScoredChain:
     """Score N chains with reward model and return highest-scoring one.
 
     Args:
         chains: List of generated chain texts to score.
         reward_model: RewardModel instance (or None for no scoring).
-        n_complete: Unused, kept for API compat. All chains are scored.
 
     Returns:
         ScoredChain with highest composite score.
 
     Raises:
-        ValueError: If chains list is empty.
+        ValueError: If chains list is empty or no valid chain found.
     """
     if not chains:
         raise ValueError("chains list must not be empty")
@@ -76,5 +74,6 @@ def best_of_n_select(
             )
 
     # best is guaranteed non-None because chains is non-empty
-    assert best is not None
+    if best is None:
+        raise ValueError("best_of_n_select: no valid chain found")
     return best

@@ -133,7 +133,7 @@ def llm_generate(
         intent = intent_parser.parse(description)
         logger.info("Parsed intent: %s", intent.name)
 
-    except (ValueError, Exception) as exc:
+    except Exception as exc:
         error_msg = str(exc)
         logger.error("Intent parsing failed: %s", error_msg)
         return LLMGenerationResult(

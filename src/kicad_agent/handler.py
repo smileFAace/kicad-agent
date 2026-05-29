@@ -1,13 +1,9 @@
-"""Skill handler: validates JSON operation requests and routes them.
+"""Skill handler: validates JSON operation requests, routes them, and executes mutations.
 
 The handler is the bridge between the GSD Skill interface and the
 kicad-agent Python backend.  It receives a JSON string from Claude,
-validates it against the Pydantic operation schema, and returns a
-structured result.
-
-**This module does NOT execute mutations.**  It validates and prepares
-operations; actual IR mutations will be wired in Phase 4+ when
-operation executors exist.
+validates it against the Pydantic operation schema, dispatches it to
+the OperationExecutor for file mutation, and returns a structured result.
 
 Public API::
 
@@ -90,7 +86,7 @@ def validate_operation(
             error=f"Validation error: {msg}",
             suggestion=suggestion,
         )
-    except Exception as exc:
+    except (TypeError, AttributeError) as exc:
         return None, OperationError(
             success=False,
             operation_type=parsed.get("op_type", "unknown"),
@@ -161,7 +157,7 @@ def handle_operation(
             error=str(exc),
             suggestion="Check the operation parameters and try again.",
         )
-    except Exception as exc:
+    except (RuntimeError, OSError, KeyError) as exc:
         concrete = op.root
         return OperationError(
             success=False,

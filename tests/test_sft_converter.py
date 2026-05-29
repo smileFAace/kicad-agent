@@ -133,11 +133,8 @@ def test_template_selection():
     key = get_template_for_chain(chain)
     assert key == "spatial_reasoning"
 
-    # Verify TASK_TEMPLATES has all 4 expected keys
+    # Verify TASK_TEMPLATES has the spatial_reasoning key (unused templates removed)
     assert "spatial_reasoning" in TASK_TEMPLATES
-    assert "board_analysis" in TASK_TEMPLATES
-    assert "routing_assessment" in TASK_TEMPLATES
-    assert "component_knowledge" in TASK_TEMPLATES
 
     # Verify SYSTEM_PROMPT_SPATIAL is non-empty
     assert len(SYSTEM_PROMPT_SPATIAL) > 50

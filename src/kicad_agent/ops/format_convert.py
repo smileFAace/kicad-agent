@@ -10,7 +10,8 @@ Handles all known KiCad 5/6 format artifacts:
   - (pins ...) wrapper inside sheets -> unwrapped
   - (at X Y) without rotation -> (at X Y 0)
   - Malformed stroke format -> corrected
-  - (fields_autoplaced) -> removed
+  - (fields_autoplaced) -> converted to (fields_autoplaced yes)
+  - (exclude_from_sim no) -> added to symbol instances
   - (nets ...) section -> removed
   - sheet_instances format -> corrected
 
@@ -61,8 +62,11 @@ _RE_STROKE_MALFORMED = re.compile(
     r"\(stroke\s+\(width\s+([^\)]+)\)\)\s*\(type\s+([^\)]+)\)\)"
 )
 
-# (fields_autoplaced) element
+# (fields_autoplaced) element (bare, without yes/no)
 _RE_FIELDS_AUTOPLACED = re.compile(r"\(fields_autoplaced\)\s*\n?")
+
+# exclude_from_sim -- missing in KiCad 6, required in KiCad 10
+_RE_SYMBOL_INSTANCE = re.compile(r"^(\s*\(symbol\s+\()", re.MULTILINE)
 
 # (nets ...) top-level section
 _RE_NETS_SECTION = re.compile(r"\(nets\s+[^)]*\)")
@@ -290,21 +294,19 @@ def _fix_stroke_format(content: str) -> str:
     return _RE_STROKE_MALFORMED.sub(_replacer, content)
 
 
-def _remove_fields_autoplaced(content: str) -> str:
-    """Remove (fields_autoplaced) elements."""
-    return _RE_FIELDS_AUTOPLACED.sub("", content)
+def _fix_fields_autoplaced(content: str) -> str:
+    """Convert bare (fields_autoplaced) to (fields_autoplaced yes).
+
+    KiCad 10 requires (fields_autoplaced yes) on hierarchical labels and
+    symbol instances. Bare (fields_autoplaced) without yes/no is a KiCad 6
+    artifact that must be converted, not removed, to preserve label layout.
+    """
+    return _RE_FIELDS_AUTOPLACED.sub("  (fields_autoplaced yes)\n", content)
 
 
 def _remove_nets_section(content: str) -> str:
     """Remove any top-level (nets ...) section."""
     return _RE_NETS_SECTION.sub("", content)
-
-
-def _fix_sheet_instances(content: str) -> str:
-    """Ensure sheet_instances has correct format for KiCad 10."""
-    # KiCad 10 format is the same as KiCad 7+ for sheet_instances
-    # Just ensure it exists and has proper structure
-    return content
 
 
 def _add_embedded_fonts(content: str) -> str:
@@ -324,6 +326,42 @@ def _add_embedded_fonts(content: str) -> str:
 def _remove_lib_symbols_extra(content: str) -> str:
     """Remove (lib_symbols_extra) non-standard sections."""
     return _RE_LIB_SYMBOLS_EXTRA.sub("", content)
+
+
+def _add_exclude_from_sim(content: str) -> str:
+    """Add (exclude_from_sim no) to symbol instances missing it.
+
+    KiCad 10 requires each symbol instance to have an exclude_from_sim
+    property. KiCad 6 files lack this, so we add the default value.
+    """
+    # Add exclude_from_sim no after uuid lines inside symbol_lib_id instances
+    # Match symbol instances in the schematic that have a uuid but no exclude_from_sim
+    lines = content.split("\n")
+    result = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+        # Detect symbol instance blocks: lines with (lib_id ...) are part of
+        # component definitions. We add exclude_from_sim after the uuid line
+        # if it's not already present.
+        if "(uuid " in stripped and i + 1 < len(lines):
+            # Check if next non-empty line already has exclude_from_sim
+            j = i + 1
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+            if j < len(lines) and "exclude_from_sim" not in lines[j]:
+                # Check we're inside a symbol block (look back for lib_id)
+                context = "\n".join(result[-8:]) if len(result) >= 8 else "\n".join(result)
+                if "(lib_id " in context:
+                    indent = len(line) - len(line.lstrip())
+                    result.append(line)
+                    result.append(" " * indent + "(exclude_from_sim no)")
+                    i += 1
+                    continue
+        result.append(line)
+        i += 1
+    return "\n".join(result)
 
 
 # ---------------------------------------------------------------------------
@@ -362,14 +400,14 @@ def convert_kicad6_to_10(content: str) -> str:
     content = _remove_net_elements(content)
     content = _unwrap_schematic_objects(content)
     content = _unwrap_pins_wrapper(content)
-    content = _remove_fields_autoplaced(content)
+    content = _fix_fields_autoplaced(content)
     content = _remove_nets_section(content)
     content = _remove_lib_symbols_extra(content)
 
     # Phase 5: Format fixes
     content = _fix_missing_rotation(content)
     content = _fix_stroke_format(content)
-    content = _fix_sheet_instances(content)
+    content = _add_exclude_from_sim(content)
 
     # Phase 6: Final cleanup
     content = _add_embedded_fonts(content)

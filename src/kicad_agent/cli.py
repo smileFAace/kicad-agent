@@ -338,7 +338,7 @@ def _handle_context(argv: list[str]) -> None:
                 prefix_counts[prefix] = prefix_counts.get(prefix, 0) + 1
             for prefix, count in sorted(prefix_counts.items()):
                 print(f"      {prefix or '(unref)'}: {count}")
-        except Exception as exc:
+        except (ValueError, FileNotFoundError, OSError, RuntimeError) as exc:
             print(f"    (Could not parse schematic: {exc})")
 
     # Parse first PCB for board summary
@@ -362,7 +362,7 @@ def _handle_context(argv: list[str]) -> None:
                 w = bounds[2] - bounds[0]
                 h = bounds[3] - bounds[1]
                 print(f"    Board size: {w:.1f} x {h:.1f} mm")
-        except Exception as exc:
+        except (ValueError, FileNotFoundError, OSError, RuntimeError) as exc:
             print(f"    (Could not parse PCB: {exc})")
 
     sys.exit(0)
@@ -475,7 +475,7 @@ def _handle_analyze(argv: list[str]) -> None:
     except (FileNotFoundError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
-    except Exception as exc:
+    except (OSError, RuntimeError) as exc:
         print(f"Warning: Could not parse file ({exc}), using defaults.", file=sys.stderr)
         stats = None
 
