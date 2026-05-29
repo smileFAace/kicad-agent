@@ -19,6 +19,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = REPO_ROOT / "src" / "kicad_agent" / "ops" / "schema.py"
+SCHEMA_SUBMODULES_DIR = REPO_ROOT / "src" / "kicad_agent" / "ops"
 EXECUTOR_PATH = REPO_ROOT / "src" / "kicad_agent" / "ops" / "executor.py"
 PROMPT_PATH = REPO_ROOT / "skills" / "prompt.md"
 SKILL_PATH = REPO_ROOT / "skills" / "SKILL.md"
@@ -31,15 +32,21 @@ README_PATH = REPO_ROOT / "README.md"
 
 
 def _count_op_classes() -> int:
-    """Count the number of Op classes in schema.py (ground truth)."""
-    content = SCHEMA_PATH.read_text(encoding="utf-8")
-    return len(re.findall(r"^class \w+Op\(BaseModel\)", content, re.MULTILINE))
+    """Count the number of Op classes in schema.py and its sub-modules."""
+    return len(_get_op_class_names())
 
 
 def _get_op_class_names() -> list[str]:
-    """Get all Op class names from schema.py."""
+    """Get all Op class names from schema.py and its _schema_*.py sub-modules."""
+    names: list[str] = []
+    # Scan hub file
     content = SCHEMA_PATH.read_text(encoding="utf-8")
-    return re.findall(r"^class (\w+Op)\(BaseModel\)", content, re.MULTILINE)
+    names.extend(re.findall(r"^class (\w+Op)\(BaseModel\)", content, re.MULTILINE))
+    # Scan sub-modules
+    for submod in sorted(SCHEMA_SUBMODULES_DIR.glob("_schema_*.py")):
+        sub_content = submod.read_text(encoding="utf-8")
+        names.extend(re.findall(r"^class (\w+Op)\(BaseModel\)", sub_content, re.MULTILINE))
+    return names
 
 
 # ---------------------------------------------------------------------------
