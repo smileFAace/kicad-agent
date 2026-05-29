@@ -106,8 +106,36 @@ Present the execution result to the user:
 
 </process>
 
+<tracking>
+Every operation executed through this skill MUST be tracked in Beads:
+
+1. **Before executing** — If no Bead exists for the current task, create one:
+   ```
+   mcp__beads__beads_create(title="KiCad: <operation summary>", labels="kicad")
+   ```
+
+2. **After executing** — Update the Bead with the result:
+   ```
+   mcp__beads__beads_update(id=<bead_id>, status="in_progress", notes="ERC passed / DRC: 2 violations found")
+   ```
+
+3. **Out-of-scope findings** — If you discover an issue unrelated to the current task:
+   ```
+   mcp__beads__beads_create(title="KiCad: <finding>", labels="out-of-scope,kicad", deps="<current_task_bead>")
+   ```
+
+4. **Validation failures** — Always create a Bead for ERC/DRC failures:
+   ```
+   mcp__beads__beads_create(title="DRC violation: <summary>", labels="drc,kicad", priority="high")
+   ```
+
+For GSD phase planning, use `/gsd-plan-phase` to structure KiCad work into phases (schematic → ERC → layout → DRC → export).
+</tracking>
+
 <context>
 The full operation schema with field-level documentation, constraints, and JSON examples is in prompt.md in the same directory. Always consult it before constructing operations.
+
+The project CLAUDE.md at `.claude/CLAUDE.md` contains the complete tool inventory (kicad-cli commands, Python packages, workflow stages). Agents should consult it for exact CLI syntax instead of asking humans to run things manually.
 
 Supported file types: .kicad_sch (schematic), .kicad_pcb (PCB), .kicad_sym (symbol library), .kicad_mod (footprint library)
 KiCad version: 10+ only

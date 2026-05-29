@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(gsd-new-project)",
+      "Skill(kicad-agent)",
+      "mcp__beads__beads_create",
+      "mcp__beads__beads_update",
+      "mcp__beads__beads_list",
+      "mcp__beads__beads_ready",
+      "mcp__beads__beads_show",
+      "mcp__beads__beads_dep_add",
+      "Bash(kicad-cli*)",
+      "Bash(python3*)"
+    ]
+  }
+}
