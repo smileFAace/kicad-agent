@@ -1,696 +1,530 @@
-# Feature Gap Research: v2.2 complete-ops
+# Feature Landscape: MCP Operations Server
 
-**Domain:** KiCad 10+ automation agent (AI-safe structural editing)
+**Domain:** MCP tool server exposing kicad-agent's 57 operations to LLM clients
 **Researched:** 2026-05-29
 **Confidence:** HIGH
-**Scope:** 5 feature gaps for milestone v2.2
+**Scope:** New MCP server milestone -- wrapping existing OperationExecutor as MCP tools
 
 ---
 
 ## Table of Contents
 
 1. [Executive Summary](#executive-summary)
-2. [Feature Gap Overview](#feature-gap-overview)
-3. [Gap 1: Hierarchical Sheet Operations](#gap-1-hierarchical-sheet-operations)
-4. [Gap 2: Remove Operations](#gap-2-remove-operations-wire-label-junction)
-5. [Gap 3: Footprint Creation](#gap-3-footprint-creation-create_footprint)
-6. [Gap 4: Connectivity Query](#gap-4-connectivity-query-operation)
-7. [Gap 5: Cross-File Atomic Wiring](#gap-5-cross-file-atomic-wiring)
-8. [Feature Classification](#feature-classification)
-9. [Dependencies and Ordering](#dependencies-and-ordering)
-10. [MVP Recommendation](#mvp-recommendation)
+2. [Design Context](#design-context)
+3. [Table Stakes](#table-stakes)
+4. [Differentiators](#differentiators)
+5. [Anti-Features](#anti-features)
+6. [Feature Dependencies](#feature-dependencies)
+7. [MVP Recommendation](#mvp-recommendation)
+8. [Tool Annotation Strategy](#tool-annotation-strategy)
+9. [Sources](#sources)
 
 ---
 
 ## Executive Summary
 
-This document covers five feature gaps identified in the Council of Ricks audit (Phase 24) as blocking for the v2.2 milestone. Each gap represents an operation class that real-world KiCad projects require but kicad-agent does not yet expose through its operation API.
+The MCP operations server exposes kicad-agent's 57 atomic operations as MCP tools, allowing any LLM client (Claude Code, Cursor, Windsurf, etc.) to edit KiCad schematics, PCBs, symbol libraries, and footprint libraries through a standardized protocol. The core design question is NOT whether to expose all 57 operations -- they should all be exposed -- but HOW to structure them for optimal LLM consumption and what supporting features (project context, validation, resource subscriptions) elevate the server from functional to excellent.
 
-Four of the five features have substantial existing infrastructure in the codebase -- the gaps are primarily about wiring, not building from scratch. Only footprint creation requires significant new code. The hierarchical sheet operations can leverage the existing root_sheet.py navigation logic. Remove operations follow the same pattern as remove_component.py. The connectivity query wraps analysis/connectivity.py. Cross-file wiring connects crossfile/atomic.py to the executor.
+The primary design decision is between two tool architectures: **flat registration** (57 individual tools, one per op_type) versus **categorized dispatch** (5-8 grouped tools with an op_type discriminator). Flat registration is the recommended approach. It maximizes LLM tool-selection accuracy because each tool has a unique name, a specific JSON Schema, and a focused description. Categorized dispatch forces the LLM to choose a category AND an op_type, increasing the chance of miscategorization. The MCP filesystem reference server uses flat registration (11 tools, each with a clear name like `read_file`, `write_file`), and it works well.
 
-The recommended implementation order is: remove operations (simplest, pattern exists) -> connectivity query (wrapping existing code) -> cross-file wiring (infrastructure exists) -> footprint creation (most new code) -> hierarchical sheets (most complex, highest value).
-
----
-
-## Feature Gap Overview
-
-| Gap | Feature | Category | Complexity | Existing Infra | Dependencies |
-|-----|---------|----------|------------|----------------|--------------|
-| 1 | Hierarchical sheet ops (add_sheet, add_sheet_pin, navigate) | Table Stakes | HIGH | root_sheet.py, hlabel_guard.py | None |
-| 2 | Remove operations (remove_wire, remove_label, remove_junction) | Table Stakes | LOW | remove_component.py pattern, IR query methods | None |
-| 3 | Footprint creation (create_footprint) | Differentiator | MEDIUM | create_symbol handler, FootprintIR | kiutils Footprint API |
-| 4 | Connectivity query (netlist/graph query as operation) | Table Stakes | LOW | analysis/connectivity.py, NetGraph | None |
-| 5 | Cross-file atomic wiring (wire crossfile/atomic.py to executor) | Differentiator | MEDIUM | crossfile/atomic.py, AtomicOperation | None |
+Beyond the 57 operation tools, the table-stakes features are: project context discovery (so the LLM knows what files exist and their contents), operation listing (so the LLM can discover available operations), and ERC/DRC validation (so the LLM can verify its edits). Differentiators include MCP Resources for file content access, batch operations, sampling-assisted operations, and resource subscriptions for file watching.
 
 ---
 
-## Gap 1: Hierarchical Sheet Operations
+## Design Context
 
-### What This Is
+### What Already Exists
 
-Hierarchical sheets let KiCad designers break a large schematic into multiple sub-sheets, each stored as a separate .kicad_sch file. A parent sheet contains a `sheet` S-expression that references a child file. Communication between sheets happens through **hierarchical labels** (in the child) and **sheet pins** (on the sheet symbol in the parent). This is how most real KiCad projects are organized.
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| `OperationExecutor` | `ops/executor.py` | Dispatches 57 op_types to handlers. Returns `dict[str, Any]`. Synchronous. |
+| `Operation` schema | `ops/schema.py` | Pydantic v2 discriminated union. `model_json_schema()` exports JSON Schema per op. |
+| Component-search MCP | `mcp/server.py` | Reference server pattern: `mcp.Server`, stdio transport, `asyncio.to_thread()`, rate limiting. |
+| `ProjectSummary` | `context.py` | Discovers KiCad files, counts components/nets/footprints, renders text summary. |
+| `SchematicIR` / `PcbIR` | `ir/` | Parsed intermediate representations with query methods. |
+| Transaction system | `ir/transaction.py` | Per-file snapshot/commit/rollback. |
+| `AtomicOperation` | `crossfile/atomic.py` | Multi-file all-or-nothing transactions. |
 
-### How It Works in KiCad
+### The 57 Operation Types (by Category)
 
-**S-expression format (parent sheet):**
-```
-(sheet (at 50.8 38.1) (size 25.4 12.7)
-  (fields_autoplaced)
-  (uuid "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
-  (property "Sheetname" "Power Supply" (at 50.8 36.83 0)
-    (effects (font (size 1.27 1.27)) (justify left bottom)))
-  (property "Sheetfile" "power_supply.kicad_sch" (at 50.8 51.562 0)
-    (effects (font (size 1.27 1.27)) (justify left top)))
-  (pin "VCC" input (at 50.8 43.18 180)
-    (effects (font (size 1.27 1.27)) (justify right)))
-  (pin "GND" passive (at 76.2 43.18 0)
-    (effects (font (size 1.27 1.27)) (justify left)))
-  (instances
-    (project "my_project"
-      (path "/root-uuid/sheet-uuid"
-        (reference "1"))))
-)
-```
+| Category | Count | Op Types | Executor Registry |
+|----------|-------|----------|-------------------|
+| Schematic mutation | 22 | add_component, remove_component, move_component, modify_property, duplicate_component, array_replicate, add_wire, add_label, add_power, add_no_connect, add_junction, remove_wire, remove_label, remove_junction, remove_no_connect, add_sheet, add_sheet_pin, navigate_hierarchy, snap_to_grid, add_power_flag, rebuild_root_sheet, embed_symbol, swap_symbol, convert_kicad6_to_10 | `_SCHEMATIC_HANDLERS` |
+| PCB mutation | 9 | update_footprint_from_library, swap_footprint, add_net, remove_net, rename_net, add_copper_zone, set_board_outline, assign_net_class, auto_route | `_PCB_HANDLERS` |
+| Project file | 4 | add_lib_entry, remove_lib_entry, add_net_class, add_design_rule | `_PROJECT_HANDLERS` |
+| Create | 5 | create_schematic, create_pcb, create_project, create_symbol, create_footprint | `_CREATE_HANDLERS` |
+| Query (read-only) | 1 | query_connectivity | `_QUERY_HANDLERS` |
+| Validation (read-only) | 7 | validate_power_nets, validate_schematic, parse_erc, extract_violation_positions, validate_hlabels, validate_footprint, verify_pin_map | `_SCHEMATIC_HANDLERS` (mixed) |
+| Reference (read-only) | 4 | renumber_refs, validate_refs, annotate, cross_ref_check | `_SCHEMATIC_HANDLERS` (mixed) |
+| Cross-file | 1 | propagate_symbol_change | `_CROSSFILE_HANDLERS` |
+| Repair | 1 | repair_schematic | `_SCHEMATIC_HANDLERS` |
 
-**S-expression format (child sheet hierarchical label):**
-```
-(hierarchical_label "VCC" shape input (at 25.4 10.16 0)
-  (effects (font (size 1.27 1.27))))
-```
-
-**Key rules:**
-1. Each sheet instance has a UUID-based path: `/root-uuid/sheet-uuid`. This path is used for symbol instance tracking (e.g., `/root-uuid/sheet-uuid/component-uuid`).
-2. Sheet pin names must exactly match hierarchical label names in the referenced sub-sheet. A sheet pin named "VCC" connects to the hierarchical label "VCC" in the child file.
-3. Sheet pin connection types (input/output/bidirectional/tri_state/passive) must match the hierarchical label shapes.
-4. Sheet pins appear on the sheet symbol boundary (the rectangle defined by position + size in the parent).
-5. The `fileName` property must point to a valid .kicad_sch file, resolved relative to the parent sheet's directory.
-6. `instances` tracks which project uses this sheet and the path for reference propagation.
-
-### kiutils API
-
-```python
-from kiutils.items.schitems import HierarchicalSheet, HierarchicalPin
-
-# HierarchicalSheet fields:
-#   position (Position), width (float), height (float)
-#   fieldsAutoplaced (bool), stroke (Stroke), fill (Fill)
-#   uuid (str), sheetName (Property), fileName (Property)
-#   properties (list), pins (list[HierarchicalPin]), instances (list)
-
-# HierarchicalPin fields:
-#   name (str), connectionType (str)  # "input"/"output"/"bidirectional"/"tri_state"/"passive"
-#   position (Position), effects (Effects), uuid (str)
-```
-
-### Operations Needed
-
-**1. `add_sheet` -- Add a hierarchical sheet instance to a schematic**
-
-Schema fields:
-- `target_file`: Parent schematic file path
-- `sheet_name`: Display name (e.g., "Power Supply")
-- `file_name`: Relative path to child schematic (e.g., "power_supply.kicad_sch")
-- `position`: PositionSpec for sheet symbol placement
-- `width`: Sheet symbol width in mm (default 25.4)
-- `height`: Sheet symbol height in mm (default 12.7)
-
-Implementation:
-1. Validate `file_name` is a valid .kicad_sch path (TargetFile validation)
-2. Create a new HierarchicalSheet kiutils object with position, size, sheetName, fileName
-3. Generate UUID for the sheet instance
-4. If the child file exists, parse it and auto-generate sheet pins from its hierarchical labels
-5. Append to `sch.sheets` list in the parent schematic
-6. Serialize parent
-
-**2. `add_sheet_pin` -- Add a pin to an existing hierarchical sheet**
-
-Schema fields:
-- `target_file`: Parent schematic file path
-- `sheet_file_name`: The fileName property of the target sheet (identifies which sheet)
-- `pin_name`: Pin name (must match a hierarchical label in the child sheet)
-- `connection_type`: "input" | "output" | "bidirectional" | "tri_state" | "passive"
-- `position`: PositionSpec for pin placement on sheet boundary
-
-Implementation:
-1. Find the target sheet in `sch.sheets` by matching `fileName` property
-2. Validate pin_name matches a hierarchical label in the referenced child sheet
-3. Create HierarchicalPin with name, connectionType, position, effects
-4. Append to `sheet.pins`
-5. Serialize parent
-
-**3. `navigate_hierarchy` -- Query the sheet hierarchy**
-
-Schema fields:
-- `target_file`: Root schematic file path
-- `depth`: How deep to traverse (0 = current sheet only, -1 = full tree)
-
-Implementation:
-1. Parse the root schematic
-2. Walk `sch.sheets`, for each sheet parse the referenced child file
-3. Recursively descend up to `depth` levels
-4. Return a tree structure: `{name, file, sheets: [...], labels: [...], components: N}`
-
-### Edge Cases
-
-1. **Circular references**: A sheet that references itself or creates a cycle in the hierarchy. Must detect and reject.
-2. **Missing child file**: Sheet references a file that does not exist. `add_sheet` should create the child file automatically (using CreateSchematicOp), but `navigate_hierarchy` must handle gracefully.
-3. **Pin/label mismatch**: Adding a sheet pin whose name does not match any hierarchical label in the child. Must validate and reject.
-4. **Relative path resolution**: `fileName` is relative to the parent sheet's directory, not the project root. Must resolve correctly when parent is in a subdirectory.
-5. **UUID path uniqueness**: Each sheet instance must have a globally unique UUID. Must generate and verify uniqueness.
-6. **Instance path propagation**: When adding a sheet, the `instances` block must include the project path with correct UUID chain.
-7. **Empty child sheet**: Adding a sheet that references a new/empty child file. Should work -- the sheet has no pins until hierarchical labels are added to the child.
-8. **Multiple sheets referencing the same file**: KiCad allows multiple sheet instances of the same file. Each instance gets its own UUID and reference numbering.
-
-### Completeness Criteria
-
-The feature is complete when:
-- Can add a hierarchical sheet to any schematic and KiCad opens the result without errors
-- Can add sheet pins that correctly link to child hierarchical labels
-- Can navigate a multi-level hierarchy and return a complete tree
-- Round-trip fidelity is maintained (parse -> add_sheet -> serialize -> KiCad opens clean)
-- ERC passes on hierarchical designs with sheet pins
-
-### Existing Infrastructure
-
-- `src/kicad_agent/ops/root_sheet.py`: Already navigates hierarchy, discovers sub-sheets, parses each, extracts hierarchical labels, classifies directions, and rebuilds sheet pins. This is the primary code to refactor or reuse.
-- `src/kicad_agent/ops/hlabel_guard.py`: Validates hierarchical label sets. Can validate pin/label consistency.
-- `src/kicad_agent/ir/schematic_ir.py`: Has `add_label` with `label_type="hierarchical"` support.
-
-### Complexity Assessment
-
-**HIGH.** The S-expression format is complex, kiutils has the classes, but the UUID path management and instance tracking add significant complexity. Auto-generating pins from child labels requires cross-file coordination. This is the most valuable but most complex gap to fill.
+**Note:** Some op_types are registered in `_SCHEMATIC_HANDLERS` but are semantically read-only (validation, reference ops). The MCP server should annotate these correctly regardless of executor registry placement.
 
 ---
 
-## Gap 2: Remove Operations (Wire, Label, Junction)
+## Table Stakes
 
-### What This Is
+Features the LLM client expects. Missing any of these makes the server feel incomplete or dangerous to use.
 
-The add operations for wires, labels, power symbols, no-connects, and junctions exist. The remove counterparts do not. Users can add schematic elements but cannot delete them through the operation API.
+### TS-1: All 57 Operations as Individual MCP Tools
 
-### How It Works in KiCad
+**Why expected:** The LLM needs to discover and call each operation independently. A tool server that cannot perform all registered operations is incomplete.
 
-KiCad schematic elements are stored in type-specific lists on the Schematic object:
+**Complexity:** MEDIUM (not LOW because generating good descriptions and annotations for 57 tools requires careful work, even though the dispatch logic is trivial)
 
-| Element | kiutils List | kiutils Type | Located In |
-|---------|-------------|-------------|-----------|
-| Wire | `graphicalItems` (filtered by `type == "wire"`) | `Connection` | `sch.graphicalItems` |
-| Local label | `labels` | `LocalLabel` | `sch.labels` |
-| Global label | `globalLabels` | `GlobalLabel` | `sch.globalLabels` |
-| Hierarchical label | `hierarchicalLabels` | `HierarchicalLabel` | `sch.hierarchicalLabels` |
-| Junction | `junctions` | `Junction` | `sch.junctions` |
-| No-connect | `noConnects` | `NoConnect` | `sch.noConnects` |
+**Dependencies:** OperationExecutor, Operation schema, all 57 op schemas
 
-### Operations Needed
+**Implementation:**
+1. Extract 57 op classes from `Operation.model_fields['root'].annotation` via `typing.get_args()`
+2. For each class, call `model_json_schema()` to produce `inputSchema`
+3. Construct `mcp.types.Tool(name=op_type, description=..., inputSchema=schema)`
+4. Register all in `@app.list_tools()`
+5. In `@app.call_tool()`, route by tool name to `OperationExecutor.execute()`
 
-**1. `remove_wire` -- Remove a wire segment**
+**Key decision:** Flat 57-tool registration, NOT categorized dispatch.
 
-Schema fields:
-- `target_file`: Schematic file path
-- `start_x`, `start_y`: Start point coordinates (for precise match)
-- `end_x`, `end_y`: End point coordinates (for precise match)
-- `uuid`: Alternative -- match by UUID (more precise, no coordinate comparison)
+**Rationale for flat registration:**
+- LLMs select tools by name + description. Unique names (e.g., `add_component`, `remove_net`) are unambiguous.
+- Each tool's JSON Schema is specific to that operation. No wasted fields or conditional branches.
+- The MCP filesystem reference server uses flat registration (11 tools). The pattern scales.
+- Adding a new operation later means adding one tool, not modifying a dispatcher.
+- `model_json_schema()` on each Pydantic op class already produces the exact JSON Schema needed. No transformation layer.
 
-Implementation pattern (from remove_component.py):
-```python
-# Find wire by UUID (preferred) or coordinate match
-wires = [item for item in sch.graphicalItems
-         if isinstance(item, Connection) and item.type == "wire"]
-wire = find_by_uuid(wires, op.uuid) or find_by_coords(wires, op.start_x, ...)
+**Rationale against categorized dispatch:**
+- Would require 5-8 tools with `op_type` as a discriminator inside the JSON Schema. The LLM must pick both the correct category AND the correct op_type. Two chances to be wrong.
+- The Pydantic `Operation` discriminated union already handles this validation. Exposing it as a flat tool list sidesteps the problem entirely -- the MCP call_tool handler validates through `Operation.model_validate()` regardless.
+- Categorized descriptions become long and ambiguous ("execute a schematic operation like add_component or remove_component..."). Individual tool descriptions are specific ("Add a component to a KiCad schematic").
 
-# Remove using identity check
-sch.graphicalItems = [item for item in sch.graphicalItems if item is not wire]
-ir._record_mutation("remove_wire", {"uuid": wire.uuid})
-```
+### TS-2: Project Context Discovery Tool
 
-**2. `remove_label` -- Remove a net label**
+**Why expected:** The LLM cannot edit files it does not know exist. Before any editing session, the LLM needs to discover the project structure: which schematics, PCBs, and libraries are present, how many components, what the file hierarchy looks like.
 
-Schema fields:
-- `target_file`: Schematic file path
-- `name`: Label text to match
-- `label_type`: "local" | "global" | "hierarchical" (determines which list to search)
-- `x`, `y`: Position for disambiguation when multiple labels share a name
-- `uuid`: Alternative -- match by UUID
+**Complexity:** LOW
 
-Implementation:
-```python
-if label_type == "global":
-    target_list = sch.globalLabels
-elif label_type == "hierarchical":
-    target_list = sch.hierarchicalLabels
-else:
-    target_list = sch.labels
+**Dependencies:** `context.py` (already built)
 
-label = find_by_uuid_or_name_pos(target_list, ...)
-# Remove using list comprehension with identity check
-```
+**Implementation:**
+- Single MCP tool: `get_project_context`
+- Input: `project_dir: str` (path to KiCad project directory)
+- Calls `render_project_context(project_dir, enrich=True)` which already exists
+- Returns formatted text summary with file lists, component counts, net counts
 
-**3. `remove_junction` -- Remove a junction dot**
+**Why a tool, not a resource:** The LLM needs to explicitly ask "what's in this project?" as a first step in its workflow. Resources are passively available; the LLM may not know to look for them. A tool forces the discovery step.
 
-Schema fields:
-- `target_file`: Schematic file path
-- `x`, `y`: Junction position
-- `uuid`: Alternative -- match by UUID
+### TS-3: Operation Listing Tool
 
-Implementation:
-```python
-jct = find_by_uuid_or_pos(sch.junctions, ...)
-sch.junctions = [j for j in sch.junctions if j is not jct]
-ir._record_mutation("remove_junction", {"uuid": jct.uuid})
-```
+**Why expected:** With 57 tools registered, the LLM needs a quick way to see what operations are available, grouped by category, without reading all 57 tool descriptions.
 
-Also needed: `remove_no_connect` follows the same pattern for `sch.noConnects`.
+**Complexity:** LOW
 
-### Edge Cases
+**Dependencies:** Operation schema registry
 
-1. **Multiple wires sharing endpoints**: Coordinate matching may find the wrong wire. UUID matching is unambiguous and should be the primary matching strategy.
-2. **Labels with duplicate names**: Multiple local labels can share the same name (different positions). Must match by position or UUID for disambiguation.
-3. **Removing a wire that other wires connect to**: KiCad does not track wire connectivity explicitly -- it is geometric. Removing a wire segment does not automatically clean up connected wires or junctions. This is expected behavior (KiCad GUI works the same way).
-4. **Removing a label that is the only connection point for a net**: After removing a label, the net may become unnamed. This is valid but may break connectivity. The operation should succeed -- the user can run ERC to detect the resulting issues.
-5. **UUID not found**: Must raise a clear error indicating the element does not exist (may have been already removed).
-6. **Position tolerance**: When matching by coordinates, floating-point comparison must use a tolerance (e.g., 0.01mm). KiCad stores coordinates at different precisions depending on context.
+**Implementation:**
+- Single MCP tool: `list_operations`
+- Input: optional `category` filter (schematic, pcb, project, create, query, validation, repair, cross_file)
+- Returns structured JSON: categories with op_type names, brief descriptions, and read/write classification
+- This is a meta-tool: it describes the other tools
 
-### Completeness Criteria
+**Alternative considered:** Rely solely on MCP's built-in `list_tools`. Rejected because 57 tools produce a very long response. `list_operations` gives a condensed categorical view.
 
-The feature is complete when:
-- Can remove wires, labels (all three types), junctions, and no-connects
-- Match by UUID (primary) or by name+position (secondary)
-- Round-trip fidelity maintained after removal
-- ERC still runs clean on schematics where elements were removed (assuming the removal did not break connectivity)
+### TS-4: ERC/DRC Validation Tools
 
-### Existing Infrastructure
+**Why expected:** After editing a schematic or PCB, the LLM must verify the changes are electrically correct. Running ERC after schematic edits and DRC after PCB edits is mandatory per the project's own CLAUDE.md rules. The operations for `parse_erc`, `validate_schematic`, `validate_power_nets`, `validate_hlabels` already exist in the schema -- they need to be exposed as MCP tools alongside a convenience wrapper.
 
-- `src/kicad_agent/ops/remove_component.py`: The exact pattern to follow. Identity-check removal, symbol instance cleanup, mutation recording.
-- `src/kicad_agent/ir/schematic_ir.py`: Has `get_wire_endpoints()` and `get_label_positions()` query methods that already find wires and labels with their UUIDs and positions.
-- `src/kicad_agent/ops/_schema_wire.py`: Has AddWireOp, AddLabelOp, etc. New RemoveWireOp, RemoveLabelOp, RemoveJunctionOp models go in the same file (or a new `_schema_remove.py`).
+**Complexity:** LOW
 
-### Complexity Assessment
+**Dependencies:** Existing validation ops in schema, `kicad-cli` for ERC/DRC
 
-**LOW.** This is the simplest gap. The pattern exists in remove_component.py. The IR query methods exist. The kiutils types are well-understood. Each remove operation is ~30-50 lines following the existing pattern.
+**Implementation:**
+- The 7 validation ops are already among the 57 tools (TS-1 covers them)
+- Additionally provide `run_erc` and `run_drc` convenience tools that wrap `kicad-cli sch erc` and `kicad-cli pcb drc` and parse the output
+- These are distinct from the schema validation ops because they run the external KiCad validator rather than internal checks
+- Input: `target_file: str`
+- Returns: structured violations list with positions, severities, descriptions
+
+### TS-5: Base Directory Configuration
+
+**Why expected:** The LLM needs to know which project directory the server is operating on. All 57 operations use relative `target_file` paths resolved against a `base_dir`. The MCP server must accept this configuration at startup or through a tool.
+
+**Complexity:** LOW
+
+**Dependencies:** OperationExecutor constructor
+
+**Implementation:**
+- Accept `--base-dir` CLI argument when starting the server
+- Alternatively, accept a `set_base_dir` MCP tool for dynamic reconfiguration
+- Store as `OperationExecutor(base_dir=Path(base_dir))` in lifespan context
+- All operation tool calls use this executor instance
 
 ---
 
-## Gap 3: Footprint Creation (create_footprint)
+## Differentiators
 
-### What This Is
+Features that set the server apart from a basic operation executor. Not expected, but they significantly improve the LLM's editing workflow.
 
-The `create_symbol` operation exists for creating schematic symbols in .kicad_sym files. There is no equivalent `create_footprint` operation for creating PCB footprints in .kicad_mod files. Users can create symbols programmatically but not footprints.
+### D-1: MCP Resources for File Content
 
-### How It Works in KiCad
+**Value:** The LLM can read KiCad file contents without calling an operation. Resources are passive data the LLM can browse before deciding what to edit. This is faster than calling `get_project_context` for every file.
 
-A footprint (.kicad_mod) is a library element containing:
+**Complexity:** MEDIUM
 
-```
-(module "MY_DIP-8" (layer "F.Cu")
-  (tedit 0)
-  (attr through_hole)
-  (fp_text reference "REF**" (at 0 -5.08) (layer "F.SilkS")
-    (effects (font (size 1 1) (thickness 0.15))))
-  (fp_text value "MY_DIP-8" (at 0 5.08) (layer "F.Fab")
-    (effects (font (size 1 1) (thickness 0.15))))
-  (fp_line (start -3.81 -3.81) (end 3.81 -3.81) (layer "F.SilkS") (width 0.12))
-  (fp_line (start 3.81 -3.81) (end 3.81 3.81) (layer "F.SilkS") (width 0.12))
-  (fp_line (start 3.81 3.81) (end -3.81 3.81) (layer "F.SilkS") (width 0.12))
-  (fp_line (start -3.81 3.81) (end -3.81 -3.81) (layer "F.SilkS") (width 0.12))
-  (pad "1" thru_hole rect (at -2.54 3.81) (size 1.6 1.6) (drill 0.8) (layers "*.Cu" "*.Mask"))
-  (pad "2" thru_hole oval (at 0 3.81) (size 1.6 1.6) (drill 0.8) (layers "*.Cu" "*.Mask"))
-  (pad "3" thru_hole oval (at 2.54 3.81) (size 1.6 1.6) (drill 0.8) (layers "*.Cu" "*.Mask"))
-  (model "${KICAD8_3DMODEL_DIR}/Package_DIP.3dshapes/DIP-8_W7.62mm.wrl"
-    (offset (xyz 0 0 0))
-    (scale (xyz 1 1 1))
-    (rotate (xyz 0 0 0))))
-```
+**Dependencies:** Parser modules, IR modules
 
-**Key elements:**
-1. **Text items**: Reference (`REF**`), Value, and optional user text. Placed on specific layers (SilkS, Fab, etc.)
-2. **Graphic items**: Lines (fp_line), circles (fp_circle), arcs (fp_arc), polygons (fp_poly) on silkscreen/fabrication/courtyard layers
-3. **Pads**: Through-hole (thru_hole), SMD (smd), or edge connector (connect). Each has number, shape (rect/roundrect/oval/circle/custom), position, size, drill parameters, and layer assignment
-4. **Courtyard**: Required boundary lines on F.CrtYd/B.CrtYd for DRC
-5. **3D model**: Optional STEP/WRL model reference with offset/scale/rotate transforms
+**Implementation:**
+- Register MCP resource templates:
+  - `kicad://project/{path}` -- returns `render_project_context()` for any directory
+  - `kicad://schematic/{path}` -- returns parsed schematic summary (components, nets, labels, hierarchy)
+  - `kicad://pcb/{path}` -- returns parsed PCB summary (footprints, nets, zones, dimensions)
+  - `kicad://library/{path}` -- returns library contents (symbol names, footprint names)
+- Use `mcp.types.ResourceTemplate` with RFC 6570 URI templates
+- Implement `@app.list_resources()` and `@app.read_resource()` handlers
+- Resources are read-only -- no mutation through resource URIs
 
-### kiutils API
+**Why it differentiates:** Most MCP tool servers are tool-only. Adding resources lets the LLM explore the project passively, building context before editing. This matches how an experienced KiCad user would first open files to understand the design before making changes.
 
-```python
-from kiutils.footprint import Footprint
-from kiutils.items.fpitems import FpLine, FpCircle, FpArc, FpText
-from kiutils.items.common import Pad, Position
+### D-2: Batch Operation Execution
 
-# Footprint constructor:
-# Footprint(libraryNickname, entryName, ...)
+**Value:** The LLM often needs to perform multiple operations in sequence (e.g., add 10 components, wire them, add labels). Sending 10 individual tool calls is slow and risks partial completion. A batch tool executes multiple operations atomically -- all succeed or all roll back.
 
-# Pad constructor:
-# Pad(number, type, shape, position, size, drill, layers, ...)
+**Complexity:** HIGH
 
-# FpLine constructor:
-# FpLine(start, end, layer, width, stroke, locked, tstamp)
-# NOTE: FpLine does NOT have an effects parameter (unlike other graphical items)
+**Dependencies:** AtomicOperation, OperationExecutor
 
-# FpText constructor:
-# FpText(type, text, position, layer, ...)
-```
+**Implementation:**
+- Single MCP tool: `execute_batch`
+- Input: `operations: list[Operation]` (array of validated operation objects)
+- Executes within a single AtomicOperation context
+- If any operation fails, rolls back ALL operations (even successful ones)
+- Returns array of results, one per operation
 
-### Operation Needed
+**Risk:** Large batches may timeout on the MCP transport. Consider a batch size limit (e.g., max 20 operations per batch).
 
-**`create_footprint` -- Create a new footprint in a footprint library**
+**Why it differentiates:** The internal AtomicOperation system already supports this pattern for cross-file operations. Extending it to arbitrary operation sequences gives the LLM a powerful compound-edit capability that no other KiCad MCP server provides.
 
-Schema fields:
-- `target_file`: Footprint library file path (.kicad_mod or .pretty directory)
-- `footprint_name`: Name for the footprint entry (e.g., "MY_DIP-8")
-- `reference_prefix`: Reference designator prefix (default "U")
-- `value`: Default value text
-- `pads`: List of PadSpec objects (new type needed)
-- `body_lines`: List of graphic line definitions (start, end, layer, width)
-- `courtyard`: Optional courtyard outline (list of line segments on F.CrtYd)
-- `model_3d`: Optional 3D model reference path
-- `attributes`: Through-hole, SMD, or board-only
+### D-3: Structured Error Responses with Repair Hints
 
-New schema type needed -- `PadSpec`:
-```python
-class PadSpec(BaseModel):
-    number: str = Field(min_length=1, max_length=32)
-    pad_type: Literal["smd", "thru_hole", "connect"]
-    shape: Literal["rect", "roundrect", "oval", "circle", "custom"]
-    position: PositionSpec
-    size_x: float = Field(gt=0, le=50)
-    size_y: float = Field(gt=0, le=50)
-    drill_diameter: Optional[float] = Field(default=None, gt=0, le=10)
-    drill_offset_x: Optional[float] = None
-    drill_offset_y: Optional[float] = None
-    layers: list[str] = Field(min_length=1, max_length=32)
-```
+**Value:** When an operation fails, the LLM gets a structured error with a suggested fix, not just a traceback. This dramatically improves the LLM's ability to self-correct.
 
-Implementation (following create_symbol pattern):
-1. Check if target library file exists; create if not
-2. Create kiutils Footprint object with libraryNickname and entryName
-3. Build reference and value text items (FpText)
-4. Build pad definitions from PadSpec list
-5. Build courtyard and body graphic lines (FpLine)
-6. Append footprint to library
-7. Serialize with `_atomic_write`
+**Complexity:** MEDIUM
 
-### Edge Cases
+**Dependencies:** Existing error types, schema validators
 
-1. **Footprint library format**: KiCad 10 uses .kicad_mod files (one footprint per file) inside .pretty directories. The target_file might be either the directory or an individual file. Must handle both.
-2. **Pad layer strings**: Must use canonical KiCad layer names ("F.Cu", "B.Cu", "*.Cu", "*.Mask", "F.Paste"). Invalid layer names will break DRC.
-3. **Drill parameters required for thru_hole**: Through-hole pads must have drill diameter. SMD pads must not. Must validate pad_type against drill presence.
-4. **Courtyard requirements**: DRC expects courtyard outlines. Footprint without courtyard will generate DRC warnings. Should auto-generate courtyard from body bounds if not explicitly provided.
-5. **FpLine has no effects parameter**: Unlike other graphical items, FpLine uses start/end/layer/width/stroke. The create_symbol handler uses different kiutils constructors. Must not accidentally pass effects to FpLine.
-6. **Pad number uniqueness**: Duplicate pad numbers are allowed in KiCad (for multi-pad connections) but unusual. Should warn, not reject.
-7. **3D model path resolution**: `${KICAD8_3DMODEL_DIR}` variable must be preserved as-is, not resolved at creation time.
+**Implementation:**
+- Standardize error response format:
+  ```json
+  {
+    "success": false,
+    "operation": "add_component",
+    "error": {
+      "type": "validation_error",
+      "message": "Library ID 'Device:R_Small' not found in sym-lib-table",
+      "suggestion": "Run list_operations with category='library' to see available libraries, or add the library with add_lib_entry",
+      "target_file": "motor-driver.kicad_sch",
+      "recoverable": true
+    }
+  }
+  ```
+- Error types: `validation_error`, `file_not_found`, `parse_error`, `mutation_error`, `security_error`
+- Each handler maps its exceptions to structured errors with suggestions
+- Use `isError: true` in MCP `CallToolResult` for protocol-correct error signaling
 
-### Completeness Criteria
+**Why it differentiates:** The existing executor returns `{"success": True, ...}` on success but raises exceptions on failure. Wrapping exceptions in structured error responses with repair hints gives the LLM actionable information for self-correction. This is the difference between "something went wrong" and "the footprint library path is wrong, try running validate_footprint first."
 
-The feature is complete when:
-- Can create a footprint with pads, graphics, and courtyard in a .kicad_mod file
-- KiCad opens the created footprint library without errors
-- DRC passes on a PCB using the created footprint (assuming correct courtyard)
-- Round-trip: create_footprint -> open in KiCad -> save -> parse back produces equivalent data
+### D-4: Pre/Post Validation Hooks
 
-### Existing Infrastructure
+**Value:** Automatically run validation before and after mutation operations. Pre-validation catches issues early (e.g., "this schematic has ERC errors before you even start editing"). Post-validation confirms the edit did not introduce new errors.
 
-- `src/kicad_agent/ops/create_file.py`: The `create_symbol` handler is the closest pattern. Same approach: build kiutils objects from specs, append to library, serialize.
-- `src/kicad_agent/ir/footprint_ir.py`: FootprintIR wraps kiutils Footprint. Has pad and graphic item access.
-- `src/kicad_agent/ops/_schema_create.py`: CreateSymbolOp with PinSpec. New CreateFootprintOp goes here with PadSpec.
-- `src/kicad_agent/ops/schema.py`: PinSpec model exists as reference for PadSpec design.
+**Complexity:** MEDIUM
 
-### Complexity Assessment
+**Dependencies:** Existing validation ops, kicad-cli
 
-**MEDIUM.** More new code than the other gaps (new PadSpec schema, new handler, footprint-specific edge cases), but the pattern from create_symbol is well-established and kiutils has the Footprint/FpLine/Pad classes.
+**Implementation:**
+- Server-level configuration: `validate_before: bool`, `validate_after: bool`
+- Before mutation ops: run a quick structural validation (parse the file, check format)
+- After mutation ops: run full validation (ERC for schematics, DRC for PCBs)
+- Results attached to the operation response as `pre_validation` and `post_validation` fields
+- Optional: `strict_mode` where post-validation failures trigger automatic rollback
+
+**Why it differentiates:** The existing `validation_gates.py` module provides the validation infrastructure. Wiring it into the MCP server gives the LLM automatic quality assurance. The LLM does not have to remember to run ERC after every edit -- the server does it automatically.
+
+### D-5: Sampling-Assisted Operations
+
+**Value:** The MCP server can request LLM completions through the client using MCP Sampling. This enables operations like "suggest component placement" or "recommend routing strategy" where the server asks the LLM for reasoning.
+
+**Complexity:** HIGH
+
+**Dependencies:** MCP Sampling protocol support in client
+
+**Implementation:**
+- Use `app.request_context.session.create_message()` to request LLM completions
+- Example: `auto_layout` operation that asks the LLM "given these 20 components, suggest optimal positions based on connectivity"
+- The LLM response feeds back into the operation handler as placement coordinates
+- Requires client support for MCP Sampling (Claude Code supports this)
+
+**Why it differentiates:** This closes the loop -- the MCP server becomes bidirectional. Not just "LLM calls tools" but "tools call LLM for reasoning." This is architecturally unique and enables higher-level operations that require spatial reasoning.
+
+### D-6: Operation History and Undo
+
+**Value:** The LLM can see what operations it has performed in the current session and undo them. This is critical for error recovery -- "undo the last 3 operations" is faster than manually reversing each one.
+
+**Complexity:** MEDIUM
+
+**Dependencies:** Transaction system, git (for undo)
+
+**Implementation:**
+- Maintain an in-memory operation log per session
+- Each successful operation records: op_type, target_file, parameters, timestamp, result
+- `get_operation_history` tool returns the log
+- `undo_last_operation` tool reverts the most recent operation by restoring from Transaction backup
+- Optional: `undo_n_operations` for batch undo
+
+**Why it differentiates:** Most MCP tool servers are stateless. Adding session history and undo makes the server stateful in a useful way. The Transaction system already captures file snapshots -- the undo tool just restores them.
 
 ---
 
-## Gap 4: Connectivity Query Operation
+## Anti-Features
 
-### What This Is
+Features to explicitly NOT build. These would harm the server's usability, safety, or maintainability.
 
-`src/kicad_agent/analysis/connectivity.py` contains a full netlist graph analysis module (NetGraph using networkx). It can answer questions like "what nets connect to this component?", "are these two pads on the same net?", and "what are the connected components of this board?". But this capability is not exposed as an operation -- users cannot query it through the operation API.
+### AF-1: Auto-Discovery of Available Operations via LLM
 
-### How It Works in KiCad
+**Why avoid:** Letting the LLM discover available operations by "asking" the server through freeform text is fragile. The LLM should use structured tool listing, not conversational discovery.
 
-Connectivity in KiCad has two layers:
+**What to do instead:** Fixed tool list via `list_tools()`. Clear descriptions. `list_operations` meta-tool for categorical overview.
 
-**Schematic connectivity** (implicit):
-- Wires connect pins that overlap geometrically
-- Labels (local, global, hierarchical) name nets -- pins connected to the same label name are on the same net
-- Power symbols connect pins to power nets (VCC, GND, etc.)
-- Bus entry points connect bus members to individual nets
+### AF-2: Automatic Batch Inference from Single Operation
 
-**PCB connectivity** (explicit):
-- Each pad has a `net` attribute with net name and net code
-- Tracks/zones connect pads on the same net
-- Copper zones fill areas connecting multiple pads
+**Why avoid:** The server should not automatically infer that "add a resistor" means "add component + wire it to the nearest net + assign footprint + add label." Each operation is atomic (D-02). Breaking this invariant for convenience would make behavior unpredictable and debugging impossible.
 
-The existing NetGraph in `analysis/connectivity.py` handles **PCB connectivity only**. It builds an undirected graph where nodes are (footprint_ref, pad_number) tuples and edges connect pads on the same net.
+**What to do instead:** Explicit batch execution via `execute_batch` (D-2). The LLM specifies exactly which operations to chain.
 
-### Operations Needed
+### AF-3: File Watching / Resource Subscriptions
 
-**1. `query_connectivity` -- Query the connectivity graph**
+**Why avoid:** Real-time file change notifications via MCP Resource Subscriptions add significant complexity (inotify/fsevents, debouncing, concurrent modification detection) for minimal benefit. The LLM editing workflow is synchronous: read -> edit -> validate. It does not need push notifications.
 
-Schema fields:
-- `target_file`: PCB file path (.kicad_pcb)
-- `query_type`: What to ask:
-  - `"connected_pads"`: Given a reference + pad, what else is on the same net?
-  - `"net_stats"`: Statistics for all nets (pad count, component count)
-  - `"are_connected"`: Are two specific pads on the same net?
-  - `"shortest_path"`: Shortest copper path between two pads
-  - `"connected_components"`: Electrically isolated sub-graphs
-  - `"net_list"`: All nets with their member pads
-- `reference`: Component reference (for pad-specific queries)
-- `pad_number`: Pad number (for pad-specific queries)
-- `reference2`, `pad_number2`: Second pad (for pair queries)
-- `net_name`: Filter by net name (for net-specific queries)
+**What to do instead:** LLM calls `get_project_context` or reads a resource when it needs current state. Polling is sufficient for the editing use case.
 
-Implementation:
-```python
-from kicad_agent.analysis.connectivity import NetGraph
+### AF-4: Persistent State Across Sessions
 
-def query_connectivity(op, ir):
-    graph = NetGraph(ir)
-    if op.query_type == "connected_pads":
-        pads = graph.get_connected_pads(op.reference, op.pad_number)
-        return {"pads": [(ref, pad) for ref, pad in pads]}
-    elif op.query_type == "net_stats":
-        return graph.get_net_stats()
-    # ... etc
-```
+**Why avoid:** Storing operation history, preferences, or learned patterns across MCP server restarts adds a database dependency and complicates the server lifecycle. The MCP server should be stateless between sessions.
 
-**2. Future: `query_schematic_connectivity` -- Query schematic-level connectivity**
+**What to do instead:** In-memory state only. The LLM rediscovers project context at session start. Operation history lives only for the current session.
 
-This is more complex because schematic connectivity is implicit (geometric wire overlap + label name matching). Would require:
-- Wire endpoint overlap detection
-- Label-to-pin association by position
-- Power symbol net injection
-- Cross-sheet label propagation
+### AF-5: GUI Integration / KiCad IPC
 
-Not required for v2.2, but the operation schema should accommodate it.
+**Why avoid:** Communicating with a running KiCad GUI instance (via IPC, socket, or file watchers) is fragile, platform-dependent, and introduces concurrency issues. The MCP server should operate on files, not on a live GUI session.
 
-### Edge Cases
+**What to do instead:** File-based editing only. The user refreshes the KiCad GUI to see changes (KiCad detects file changes automatically). If KiCad is running, the server should warn that concurrent editing may cause conflicts.
 
-1. **PCB without netlist**: A fresh PCB with no schematic link has no net assignments. All pads are unconnected. NetGraph should handle gracefully (empty graph or single-node components).
-2. **Unconnected pads**: Pads with no net assignment appear as isolated nodes. Queries should return empty results, not errors.
-3. **Large boards**: NetGraph builds from PcbIR which parses the full PCB. For boards with 10,000+ pads, graph construction may be slow. Consider caching the graph per executor session.
-4. **Net name canonicalization**: KiCad net names may have different capitalization or whitespace than user expects. Queries should be case-insensitive.
-5. **Multi-unit symbols**: A symbol with multiple units (e.g., a quad op-amp) has pads spread across units. Connectivity queries must handle the reference format (e.g., "U1A" vs "U1" for unit A).
+### AF-6: Dynamic Tool Registration / Runtime Schema Modification
 
-### Completeness Criteria
+**Why avoid:** Adding or removing MCP tools based on the current project's libraries or configuration would make the tool list unpredictable. The LLM cannot plan its workflow if the available tools change mid-session.
 
-The feature is complete when:
-- Can query PCB connectivity through the operation API
-- All five query types work (connected_pads, net_stats, are_connected, shortest_path, connected_components)
-- Results are structured JSON, not raw networkx objects
-- Handles empty/unpopulated PCBs without errors
-
-### Existing Infrastructure
-
-- `src/kicad_agent/analysis/connectivity.py`: Full NetGraph implementation with networkx. Methods: `get_connected_pads`, `shortest_path`, `are_connected`, `get_connectivity_components`, `get_net_stats`. Works with PcbIR.
-- The gap is purely wiring -- creating the schema model, registering in executor, and calling the existing methods.
-
-### Complexity Assessment
-
-**LOW.** The analysis code exists and works. The gap is a schema definition (~30 lines), an executor handler (~40 lines), and registration. The only decision is the schema design for the `query_type` discriminator.
+**What to do instead:** Fixed set of 57 operation tools, always available. Validation operations (validate_footprint, verify_pin_map) report what is missing, rather than the tool disappearing.
 
 ---
 
-## Gap 5: Cross-File Atomic Wiring
+## Feature Dependencies
 
-### What This Is
-
-`src/kicad_agent/crossfile/atomic.py` implements an `AtomicOperation` class that coordinates multiple file-level transactions in an all-or-nothing pattern. `crossfile/propagation.py` has functions for updating references across files. Neither is wired to the operation executor. No operation can currently perform mutations across multiple files atomically.
-
-### How It Works
-
-The cross-file infrastructure provides:
-
-**AtomicOperation** (`crossfile/atomic.py`):
-- Context manager wrapping multiple Transaction objects
-- Each Transaction handles one file (snapshot, mutate, commit/rollback)
-- If any file's mutation fails, all files roll back to snapshots
-- `commit()` writes all files; `rollback()` restores all from backups
-- Returns `AtomicResult` with per-file `DiffEntry` lists
-
-**Propagation functions** (`crossfile/propagation.py`):
-- `propagate_symbol_ref`: Update symbol references across schematic files when a library symbol changes
-- `propagate_footprint_ref`: Update footprint references when a footprint library entry changes
-
-**Project discovery** (`crossfile/__init__.py`):
-- `discover_project`: Find all KiCad files in a project directory
-- `detect_project_root`: Walk up from a file to find the project root
-- `structural_diff`: Compare two KiCad files semantically
-
-### What Needs Wiring
-
-1. **New executor registry**: The executor has `_SCHEMATIC_HANDLERS`, `_PCB_HANDLERS`, `_PROJECT_HANDLERS`, `_CREATE_HANDLERS`. A new `_CROSSFILE_HANDLERS` registry (or extending `_PROJECT_HANDLERS`) is needed for operations that touch multiple files.
-
-2. **Multi-file operation dispatch**: Current dispatch is one operation -> one file -> one IR -> one transaction. Cross-file operations need: one operation -> multiple files -> multiple IRs -> one AtomicOperation.
-
-3. **Cross-file operation schema**: Operations that touch multiple files need a different target specification. Options:
-   - `target_project`: Path to .kicad_pro file, discover all related files
-   - `target_files`: List of TargetFile paths
-   - `target_directory`: Project root directory
-
-4. **Operations that need cross-file support** (initial set):
-   - `propagate_symbol_change`: When a symbol library entry changes, update all schematics that use it
-   - `propagate_footprint_change`: When a footprint library entry changes, update all PCBs that use it
-   - `sync_schematic_pcb`: Push schematic changes (netlist, component changes) to the PCB
-   - `full_annotate`: Annotate references across all sheets in a hierarchical design
-
-### Edge Cases
-
-1. **Partial failure**: If 3 of 5 files mutate successfully but the 4th fails, all must roll back. The AtomicOperation context manager handles this, but the executor must use it correctly.
-2. **File locking**: Multiple transactions may try to lock the same file. fcntl locking is per-process on some systems. Must handle lock contention.
-3. **Circular dependencies**: Propagation might trigger cascading updates (symbol change -> schematic update -> PCB update). Must detect and limit depth.
-4. **Project discovery**: If the project structure is non-standard (files in unusual directories), discovery may miss files. Must be explicit about which files to touch.
-5. **Race conditions**: If another process (KiCad GUI) modifies a file between snapshot and commit, the transaction is based on stale data. File locking mitigates but does not eliminate this.
-6. **Large projects**: Atomic snapshots of many large files consume disk space and time. For a 50-sheet hierarchical design with a large PCB, snapshotting all files could take seconds.
-
-### Completeness Criteria
-
-The feature is complete when:
-- At least one cross-file operation works end-to-end (propagate_symbol_change is the simplest)
-- Atomic rollback works: if any file fails, all files restore to pre-operation state
-- Executor dispatch supports multi-file operations alongside single-file operations
-- Project discovery works for standard KiCad project layouts
-
-### Existing Infrastructure
-
-- `src/kicad_agent/crossfile/atomic.py`: AtomicOperation, AtomicResult, full all-or-nothing transaction logic.
-- `src/kicad_agent/crossfile/propagation.py`: propagate_symbol_ref, propagate_footprint_ref.
-- `src/kicad_agent/crossfile/__init__.py`: Project discovery, structural diff.
-- `src/kicad_agent/ir/transaction.py`: Per-file transaction with snapshot, commit, rollback, file locking.
-
-The gap is entirely wiring: schema models, executor registration, and handler functions that compose existing infrastructure.
-
-### Complexity Assessment
-
-**MEDIUM.** The infrastructure is complete. The complexity is in the executor integration -- the current dispatch pattern assumes one file per operation. Supporting multi-file operations requires either a new dispatch path or a wrapper that creates multiple single-file operations inside an AtomicOperation. The design decision here affects future operations.
-
----
-
-## Feature Classification
-
-### Table Stakes (Missing = Product Feels Incomplete)
-
-| Feature | Why Expected | Complexity | Dependencies |
-|---------|--------------|------------|--------------|
-| Hierarchical sheet operations | Real KiCad projects use hierarchy. An agent that cannot navigate or create sub-sheets cannot handle production designs. | HIGH | None (root_sheet.py provides foundation) |
-| Remove operations (wire, label, junction) | Add-only API feels broken. Users expect symmetric add/remove. If you can add a wire, you must be able to remove it. | LOW | None (pattern exists) |
-| Connectivity query | Users need to ask "what connects to what?" The analysis code exists; not exposing it is a gap. | LOW | None (analysis/connectivity.py exists) |
-
-### Differentiators (Competitive Advantage)
-
-| Feature | Value Proposition | Complexity | Dependencies |
-|---------|-------------------|------------|--------------|
-| Footprint creation | No other KiCad automation tool lets you create footprints through a JSON operation schema. Enables full programmable footprint generation. | MEDIUM | kiutils Footprint API |
-| Cross-file atomic operations | True multi-file atomic transactions are unique. KiBot and kicad-python do not provide this. Enables safe project-wide mutations. | MEDIUM | crossfile/atomic.py exists |
-
-### Anti-Features (Explicitly Not Building)
-
-| Feature | Why Avoid | What to Do Instead |
-|---------|-----------|-------------------|
-| Auto-generated hierarchical pin/label sync | Automatically creating/deleting pins when labels change is fragile and surprises users. | Explicit add_sheet_pin operation. User controls pin creation. |
-| Remove-by-pattern (wildcard removal) | "Remove all wires in region X" is dangerous in AI hands. One bad intent could delete an entire schematic. | Single-element removal by UUID or precise coordinates only. |
-| Schematic connectivity graph | Building connectivity from geometric wire overlap is complex and error-prone. Not needed for v2.2. | PCB connectivity query only (explicit net assignments). Defer schematic connectivity. |
-| Footprint wizard (parameterized generators) | "Create a DIP-8 footprint" with auto-calculated pad positions is valuable but scope-creeping. | Explicit pad position specification. Parameterized generators are a future extension. |
-
----
-
-## Dependencies and Ordering
+### Internal Dependency Graph
 
 ```
-[Remove Operations]           -- no deps, simplest, pattern exists
-        |
-        v
-[Connectivity Query]          -- no deps, wraps existing code
-        |
-        v
-[Cross-File Wiring]           -- no deps, wires existing infra
-        |
-        v
-[Footprint Creation]          -- no deps, most new code
-        |
-        v
-[Hierarchical Sheet Ops]      -- most complex, highest value
-        |
-        v
-(Cross-file + hierarchy combined -- future phase)
+TS-1 (57 tools)
+  depends on: OperationExecutor, Operation schema (all 57 classes)
+  blocks: everything else (core dispatch)
+
+TS-5 (base dir config)
+  depends on: OperationExecutor constructor
+  blocks: TS-1 (executor needs base_dir)
+
+TS-2 (project context)
+  depends on: context.py (exists)
+  blocks: nothing (standalone tool)
+
+TS-3 (list operations)
+  depends on: schema.py metadata
+  blocks: nothing (standalone tool)
+
+TS-4 (ERC/DRC tools)
+  depends on: kicad-cli, existing validation ops
+  blocks: D-4 (pre/post validation hooks)
+
+D-1 (resources)
+  depends on: parser modules, IR modules
+  blocks: nothing
+
+D-2 (batch ops)
+  depends on: TS-1, AtomicOperation
+  blocks: nothing
+
+D-3 (structured errors)
+  depends on: TS-1 (wraps existing dispatch)
+  blocks: nothing
+
+D-4 (validation hooks)
+  depends on: TS-1, TS-4, validation_gates.py
+  blocks: nothing
+
+D-5 (sampling)
+  depends on: TS-1, MCP Sampling support in client
+  blocks: nothing
+
+D-6 (history/undo)
+  depends on: TS-1, Transaction system
+  blocks: nothing
 ```
 
-**Why this order:**
+### External Dependencies
 
-1. **Remove operations first**: Lowest risk, clearest pattern. Validates the add/remove symmetry. Three operations in ~150 lines of handler code total.
-
-2. **Connectivity query second**: Wraps existing code. Exercises the schema -> executor -> IR path for read-only operations (no mutation). Good warm-up for more complex operations.
-
-3. **Cross-file wiring third**: Medium complexity but the infrastructure is complete. The design decision here (how to extend the executor) affects future operations, so doing it before the complex features lets the pattern settle.
-
-4. **Footprint creation fourth**: Most new code. Requires new PadSpec schema type. Benefits from having the executor extension pattern established by cross-file wiring.
-
-5. **Hierarchical sheets last**: Highest complexity, highest value. The root_sheet.py code provides navigation, but creating new sheets with correct UUID paths and instance tracking is the hardest part. Doing it last means the operation patterns are well-established.
+| Dependency | Type | Status | Notes |
+|------------|------|--------|-------|
+| `mcp` package 1.12.3 | Python package | Installed | Low-level Server + types |
+| `mcp.server.stdio` | Transport | Installed | stdio transport, same as component-search |
+| `kicad-cli 10.0.1` | External CLI | Installed | For ERC/DRC execution |
+| Pydantic v2 2.12.5 | Python package | Installed | Schema generation |
+| `asyncio.to_thread()` | Python stdlib | Available | Wrapping sync executor calls |
 
 ---
 
 ## MVP Recommendation
 
-### v2.2 Must-Have (All 5 Gaps)
+### Phase 1: Core Server (Must-Have)
 
-All five gaps are in the milestone scope. Recommended implementation order:
+The minimum viable MCP operations server. Without these, the server is unusable.
 
-1. **Remove operations** (3 ops: remove_wire, remove_label, remove_junction) -- 1-2 days
-2. **Connectivity query** (1 op: query_connectivity) -- 0.5-1 day
-3. **Cross-file wiring** (1 op: propagate_symbol_change, executor extension) -- 2-3 days
-4. **Footprint creation** (1 op: create_footprint, PadSpec schema) -- 2-3 days
-5. **Hierarchical sheets** (3 ops: add_sheet, add_sheet_pin, navigate_hierarchy) -- 3-5 days
+| Feature | ID | Est. Effort |
+|---------|-----|-------------|
+| All 57 operations as MCP tools | TS-1 | 2-3 days |
+| Base directory configuration | TS-5 | 0.5 day |
+| Project context discovery | TS-2 | 0.5 day |
+| Operation listing | TS-3 | 0.5 day |
+| Structured error responses | D-3 | 1 day |
 
-### Defer to Later
+**Total: 4-5 days**
 
-- `remove_no_connect`: Follows the same pattern as remove_junction. Not blocking.
-- `remove_power_symbol`: Removing power symbols is just remove_component with a power: prefix. Not a separate operation.
-- Schematic connectivity graph: Requires geometric wire overlap analysis. Not needed for v2.2.
-- Footprint wizard/parameterized generators: Explicit positions only for now.
+This gives the LLM a fully functional editing server. It can discover projects, list available operations, execute any of the 57 operations, and receive clear error messages when something goes wrong.
+
+### Phase 2: Validation (Should-Have)
+
+| Feature | ID | Est. Effort |
+|---------|-----|-------------|
+| ERC/DRC convenience tools | TS-4 | 1 day |
+| Pre/post validation hooks | D-4 | 1-2 days |
+| Operation history and undo | D-6 | 1-2 days |
+
+**Total: 3-5 days**
+
+This adds safety nets. The LLM can verify its edits, get automatic validation feedback, and undo mistakes.
+
+### Phase 3: Advanced (Nice-to-Have)
+
+| Feature | ID | Est. Effort |
+|---------|-----|-------------|
+| MCP Resources for file content | D-1 | 2-3 days |
+| Batch operation execution | D-2 | 2-3 days |
+| Sampling-assisted operations | D-5 | 3-5 days |
+
+**Total: 7-11 days**
+
+This elevates the server from functional to excellent. Resources provide passive context. Batch operations enable compound edits. Sampling enables bidirectional LLM collaboration.
+
+### Deferred
+
+| Feature | Reason |
+|---------|--------|
+| File watching/subscriptions (AF-3) | Polling is sufficient for editing workflow |
+| Persistent state (AF-4) | Stateless is simpler and more reliable |
+| KiCad GUI IPC (AF-5) | File-based is safer and platform-independent |
+| Dynamic tool registration (AF-6) | Fixed tool list is more predictable |
+
+---
+
+## Tool Annotation Strategy
+
+MCP tool annotations hint at tool behavior without enforcing it. The MCP protocol defines these annotation fields:
+
+| Annotation | Purpose | When to Set `true` |
+|------------|---------|-------------------|
+| `readOnlyHint` | Tool does not modify state | All query, validation, and reference ops |
+| `destructiveHint` | Tool may destroy data irreversibly | Remove operations, repair operations |
+| `idempotentHint` | Repeated calls produce same result | Create ops (create if not exists), validation ops |
+| `openWorldHint` | Tool accesses external resources | Component search ops (access JLCPCB API) |
+
+### Annotation Map by Category
+
+| Category | readOnlyHint | destructiveHint | idempotentHint | openWorldHint |
+|----------|-------------|-----------------|----------------|---------------|
+| Schematic mutation (add/move/modify) | false | false | false | false |
+| Schematic remove | false | true | false | false |
+| PCB mutation | false | false | false | false |
+| PCB remove (remove_net, rename_net) | false | true | false | false |
+| Project file (add_lib_entry, add_net_class) | false | false | false | false |
+| Project file (remove_lib_entry) | false | true | false | false |
+| Create | false | false | true | false |
+| Query (query_connectivity) | true | false | false | false |
+| Validation (all 7 ops) | true | false | true | false |
+| Reference (renumber, annotate, validate_refs) | false | false | false | false |
+| Reference (cross_ref_check) | true | false | false | false |
+| Cross-file (propagate_symbol_change) | false | false | false | false |
+| Repair (repair_schematic, snap_to_grid, convert) | false | true | false | false |
+| Repair (rebuild_root_sheet, add_power_flag) | false | false | false | false |
+| Context tools (get_project_context, list_operations) | true | false | true | false |
+| ERC/DRC tools (run_erc, run_drc) | true | false | false | false |
+
+### Annotation Implementation
+
+```python
+# Tool annotation mapping: op_type -> mcp.types.ToolAnnotations
+TOOL_ANNOTATIONS = {
+    # Read-only operations
+    "query_connectivity": ToolAnnotations(readOnlyHint=True),
+    "validate_power_nets": ToolAnnotations(readOnlyHint=True, idempotentHint=True),
+    "validate_schematic": ToolAnnotations(readOnlyHint=True, idempotentHint=True),
+    "parse_erc": ToolAnnotations(readOnlyHint=True, idempotentHint=True),
+    "extract_violation_positions": ToolAnnotations(readOnlyHint=True, idempotentHint=True),
+    "validate_hlabels": ToolAnnotations(readOnlyHint=True, idempotentHint=True),
+    "validate_footprint": ToolAnnotations(readOnlyHint=True, idempotentHint=True),
+    "verify_pin_map": ToolAnnotations(readOnlyHint=True, idempotentHint=True),
+    "cross_ref_check": ToolAnnotations(readOnlyHint=True),
+    "navigate_hierarchy": ToolAnnotations(readOnlyHint=True),
+
+    # Destructive operations
+    "remove_component": ToolAnnotations(destructiveHint=True),
+    "remove_wire": ToolAnnotations(destructiveHint=True),
+    "remove_label": ToolAnnotations(destructiveHint=True),
+    "remove_junction": ToolAnnotations(destructiveHint=True),
+    "remove_no_connect": ToolAnnotations(destructiveHint=True),
+    "remove_net": ToolAnnotations(destructiveHint=True),
+    "remove_lib_entry": ToolAnnotations(destructiveHint=True),
+    "repair_schematic": ToolAnnotations(destructiveHint=True),
+    "snap_to_grid": ToolAnnotations(destructiveHint=True),
+    "convert_kicad6_to_10": ToolAnnotations(destructiveHint=True),
+
+    # Idempotent operations
+    "create_schematic": ToolAnnotations(idempotentHint=True),
+    "create_pcb": ToolAnnotations(idempotentHint=True),
+    "create_project": ToolAnnotations(idempotentHint=True),
+    "create_symbol": ToolAnnotations(idempotentHint=True),
+    "create_footprint": ToolAnnotations(idempotentHint=True),
+}
+```
 
 ---
 
 ## Sources
 
-- `src/kicad_agent/ops/schema.py` -- 47+ operation schemas, discriminated union pattern
-- `src/kicad_agent/ops/remove_component.py` -- Remove operation pattern
-- `src/kicad_agent/ops/create_file.py` -- Create operation pattern (create_symbol)
-- `src/kicad_agent/ops/root_sheet.py` -- Hierarchical navigation logic
-- `src/kicad_agent/ops/hlabel_guard.py` -- Hierarchical label validation
-- `src/kicad_agent/ir/schematic_ir.py` -- SchematicIR with add/remove/query methods
-- `src/kicad_agent/ir/footprint_ir.py` -- FootprintIR for PCB footprint access
-- `src/kicad_agent/ir/transaction.py` -- Per-file transaction with rollback
-- `src/kicad_agent/crossfile/atomic.py` -- Multi-file atomic operation
-- `src/kicad_agent/crossfile/propagation.py` -- Cross-file reference propagation
-- `src/kicad_agent/analysis/connectivity.py` -- NetGraph with networkx
-- `src/kicad_agent/ops/_schema_wire.py` -- Wire/label/junction add schemas
-- `src/kicad_agent/ops/_schema_create.py` -- Create operation schemas
-- `src/kicad_agent/ops/executor.py` -- Operation dispatch and handler registries
-- `KNOWN_LIMITATIONS.md` -- H-1, M-1, M-3, M-4, M-6 gap documentation
-- kiutils API inspection -- HierarchicalSheet, HierarchicalPin, Footprint, Pad, FpLine constructors
-- KiCad S-expression file format specification (dev-docs.kicad.org)
+- `src/kicad_agent/ops/schema.py` -- 57 operation schemas, discriminated union, `model_json_schema()` export
+- `src/kicad_agent/ops/executor.py` -- OperationExecutor dispatch, 6 handler registries, Transaction wrapping
+- `src/kicad_agent/mcp/server.py` -- Existing MCP server pattern (low-level Server, stdio transport, asyncio.to_thread)
+- `src/kicad_agent/mcp/tools.py` -- Tool implementation pattern (validation, formatting, rate limiting)
+- `src/kicad_agent/context.py` -- ProjectSummary, file discovery, context rendering
+- MCP Specification: `https://modelcontextprotocol.io/docs/concepts/tools` -- Tool definitions, annotations, error handling
+- MCP Specification: `https://modelcontextprotocol.io/docs/concepts/resources` -- Resource templates, subscriptions
+- MCP Filesystem Server (reference implementation) -- 11 tools with annotation table, flat registration pattern
+- `typing.get_args()` on `Operation.model_fields['root'].annotation` -- Extracts exactly 57 op classes
 
 ---
-*Feature gap research for: kicad-agent v2.2 complete-ops milestone*
+*Feature landscape research for: kicad-agent MCP operations server milestone*
 *Researched: 2026-05-29*
 *Confidence: HIGH*

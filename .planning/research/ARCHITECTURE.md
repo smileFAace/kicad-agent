@@ -1,399 +1,500 @@
-# Architecture: complete-ops Milestone (v2.2)
+# Architecture: MCP Edit Server for KiCad Operations
 
-**Domain:** Integration architecture for 5 feature gaps in existing kicad-agent
+**Domain:** MCP server exposing 57 KiCad editing operations as AI-callable tools
 **Researched:** 2026-05-29
-**Confidence:** HIGH (direct codebase analysis, no external dependencies)
+**Confidence:** HIGH (direct codebase analysis, MCP SDK v1.12.3 verified, existing server pattern established)
 
 ## Executive Summary
 
-The existing kicad-agent follows a strict pipeline: **Parser -> IR -> Operation Handler -> Serializer -> Transaction**. Every operation flows through the executor, which dispatches by `op_type` to registered handlers using one of four registries (`_SCHEMATIC_HANDLERS`, `_PCB_HANDLERS`, `_PROJECT_HANDLERS`, `_CREATE_HANDLERS`). Each handler receives the appropriate IR object and returns a dict. All mutations are wrapped in `Transaction` for rollback safety.
+The kicad-agent project needs a new MCP server that exposes its 57 operation types as tools that AI agents (Claude, GPT, etc.) can call to edit KiCad schematic, PCB, symbol, and footprint files. The existing `kicad-component-search` MCP server (4 tools for JLCPCB lookup) provides a proven pattern but serves a fundamentally different purpose -- it wraps an external API client, while the edit server must wrap a local file-mutation engine with Transaction-based rollback, path confinement security, and IR-based structural editing.
 
-The 5 new features fit into this pipeline with varying degrees of disruption. Two features (remove operations, connectivity query) are straightforward additions to existing registries. Two features (hierarchical sheets, footprint creation) require new schema sub-modules and handler modules but no pipeline changes. One feature (cross-file wiring) is the most complex because it requires a new execution path in the executor that coordinates multiple files atomically.
+The recommended architecture is a **separate server binary** (`kicad-agent-edit`) using the same low-level `mcp.server.Server` API as the existing component-search server, with **dynamic tool generation** from the Pydantic schema's `oneOf` discriminated union. Each of the 57 operation types becomes a distinct MCP tool. The tool definitions are generated at startup by iterating the JSON Schema produced by `Operation.model_json_schema()`, extracting each variant's `op_type` const and its `inputSchema`.
 
-No new IR layer is needed for any feature. The existing `SchematicIR` already wraps kiutils `Schematic` which has `sheets` and `sheetInstances` attributes. The existing `FootprintIR` wraps kiutils `Footprint`. The existing `PcbIR` and `NetGraph` provide everything connectivity queries need.
+This approach keeps the existing component-search server untouched, avoids the complexity of a monolithic multi-purpose server, and gives AI agents granular tool selection. The OperationExecutor class -- the existing dispatch engine with 6 handler registries (schematic: 41, PCB: 10, project: 4, create: 5, query: 1, cross-file: 1) -- serves as the backend without modification.
 
 ## Recommended Architecture
 
-### Data Flow (Unchanged Pipeline)
+### Integration Approach: Separate Server Binary
+
+Three options were evaluated:
+
+| Option | Description | Verdict |
+|--------|-------------|---------|
+| **A. Merge into existing server** | Add 57 tools to `kicad-component-search` | REJECTED -- mixes concerns, bloats a focused server, requires shared state |
+| **B. Shared module, two entry points** | Extract common MCP infra to `mcp/base.py`, both servers import it | REJECTED -- premature abstraction, existing server is simple and complete at 284 lines |
+| **C. New server module, own entry point** | `mcp/edit_server.py` with `kicad-agent-edit` binary | RECOMMENDED -- clean separation, independent lifecycle, zero risk to existing |
+
+**Why separate binary:** The component-search server wraps `EasyEdaClient` for JLCPCB API calls (network I/O, rate limiting, caching). The edit server wraps `OperationExecutor` for local file mutation (disk I/O, AST parsing, Transaction rollback). These have zero shared runtime state. A merged server would carry unnecessary dependencies and complicate error isolation. The separate binary also lets users install only what they need.
+
+**Data flow for the new server:**
 
 ```
-LLM JSON -> Operation (Pydantic validate) -> OperationExecutor.execute()
-    -> [branch by file type]
-    -> Parse file -> Build IR -> Transaction wraps handler call
-    -> Handler mutates IR -> Serialize -> Normalize -> Commit
+AI Agent (MCP Client)
+  |
+  v  (stdio transport, JSON-RPC)
+edit_server.py
+  |-- list_tools() -> 57 Tool definitions (generated from Pydantic schema at startup)
+  |-- call_tool(name, arguments)
+       |
+       v
+     Operation.model_validate({"root": arguments_with_op_type})
+       |
+       v  (Pydantic validates all fields, rejects unsafe chars, path traversal)
+     OperationExecutor(base_dir=project_dir).execute(op)
+       |
+       v  (dispatches to registry: schematic/pcb/project/create/query/cross-file)
+     Handler function (parse -> IR -> mutate -> serialize -> normalize -> commit)
+       |
+       v
+     {"success": true, "operation": "...", "target_file": "...", "details": {...}}
 ```
 
-No pipeline changes needed for any of the 5 features. The executor's existing 4-registry dispatch pattern accommodates all of them.
+### Tool Mapping Strategy: 57 Individual Tools
+
+Three patterns were evaluated for mapping operations to MCP tools:
+
+| Pattern | Description | Pros | Cons |
+|---------|-------------|------|------|
+| **A. Single `execute_operation` tool** | One tool accepting the full Operation union | Simple server code | AI must construct perfect discriminated union; tool too generic; poor discoverability |
+| **B. 57 individual tools** | One tool per op_type | Best discoverability; AI picks exact tool; inputSchema per operation | More tool definitions (but generated dynamically) |
+| **C. 6 grouped tools by category** | `schematic_op`, `pcb_op`, etc. each accepting category union | Fewer tools | AI must know category; adds indirection; categories have different dispatch semantics |
+
+**Recommendation: Pattern B -- 57 individual tools.**
+
+Rationale:
+1. MCP clients (Claude Desktop, Cursor, etc.) present tools by name. A tool named `add_component` is immediately clear; `execute_operation` with an `op_type` parameter is not.
+2. Each tool's `inputSchema` can be extracted directly from the Pydantic schema's `oneOf` variants -- no manual schema writing needed.
+3. The existing component-search server manually defined 4 tool schemas. With 57 tools, manual definition is impractical. Dynamic generation from `Operation.model_json_schema()` is the only maintainable approach.
+4. MCP's `ToolAnnotations` provides `readOnlyHint` and `destructiveHint` that can be set per tool, giving AI agents safety signals.
+
+**Dynamic tool generation implementation:**
+
+```python
+from kicad_agent.ops.schema import Operation, get_operation_schema
+
+def _build_tool_definitions() -> list[types.Tool]:
+    """Generate MCP tool definitions from the Pydantic Operation schema."""
+    schema = get_operation_schema()
+    defs = schema.get("$defs", {})
+    root_prop = schema["properties"]["root"]
+    tools = []
+
+    for variant in root_prop["oneOf"]:
+        ref = variant.get("$ref", "")
+        class_name = ref.split("/")[-1]
+        cls_schema = defs.get(class_name, {})
+        props = cls_schema.get("properties", {})
+        op_type = props.get("op_type", {}).get("const", "")
+
+        # Build inputSchema from the variant's properties, minus op_type
+        input_props = {k: v for k, v in props.items() if k != "op_type"}
+        required = [r for r in cls_schema.get("required", []) if r != "op_type"]
+
+        # Determine annotations based on operation category
+        annotations = _build_annotations(op_type)
+
+        tools.append(types.Tool(
+            name=op_type,
+            description=_build_description(class_name, cls_schema),
+            inputSchema={
+                "type": "object",
+                "properties": input_props,
+                "required": required,
+            },
+            annotations=annotations,
+        ))
+
+    return tools
+```
+
+### Tool Annotations Strategy
+
+MCP ToolAnnotations (verified available in SDK v1.12.3) provides behavioral hints:
+
+```python
+def _build_annotations(op_type: str) -> types.ToolAnnotations:
+    """Set safety annotations based on operation category."""
+    read_only_ops = {
+        "query_connectivity", "validate_refs", "validate_schematic",
+        "validate_power_nets", "validate_footprint", "verify_pin_map",
+        "cross_ref_check", "parse_erc", "extract_violation_positions",
+        "validate_hlabels", "navigate_hierarchy",
+    }
+    destructive_ops = {
+        "remove_component", "remove_net", "remove_wire", "remove_label",
+        "remove_junction", "remove_no_connect", "remove_lib_entry",
+        "repair_schematic", "convert_kicad6_to_10", "rebuild_root_sheet",
+    }
+
+    return types.ToolAnnotations(
+        readOnlyHint=op_type in read_only_ops,
+        destructiveHint=op_type in destructive_ops,
+        idempotentHint=False,  # Most operations produce side effects
+        openWorldHint=False,   # All operations target local files
+    )
+```
 
 ### Component Boundaries
 
-| Component | Responsibility | Status |
-|-----------|---------------|--------|
-| `ops/_schema_sheet.py` | NEW: Pydantic models for sheet ops (add_sheet, add_sheet_pin) | Must create |
-| `ops/sheet_ops.py` | NEW: Handler implementations for sheet operations | Must create |
-| `ops/_schema_wire.py` | MODIFIED: Add RemoveWireOp, RemoveLabelOp, RemoveJunctionOp | Extend existing |
-| `ops/_schema_create.py` | MODIFIED: Add CreateFootprintOp | Extend existing |
-| `ops/create_file.py` | MODIFIED: Add create_footprint handler | Extend existing |
-| `ops/_schema_query.py` | NEW: Pydantic model for connectivity query | Must create |
-| `ops/connectivity_query.py` | NEW: Handler that wraps NetGraph.from_pcb_ir | Must create |
-| `ops/executor.py` | MODIFIED: Wire new handlers, add _CROSS_FILE_OPS path | Extend existing |
-| `ops/schema.py` | MODIFIED: Import and re-export new Op classes | Extend existing |
-| `ir/schematic_ir.py` | MODIFIED: Add remove_wire, remove_label, remove_junction methods | Extend existing |
-| `crossfile/atomic.py` | UNCHANGED: Already built, just needs wiring | Wire, don't modify |
-| `analysis/connectivity.py` | UNCHANGED: Already built, just needs operation exposure | Wire, don't modify |
+| Component | Responsibility | Status | Location |
+|-----------|---------------|--------|----------|
+| `mcp/edit_server.py` | NEW: MCP server with 57 dynamic tools | Must create | `src/kicad_agent/mcp/` |
+| `mcp/server.py` | UNCHANGED: Component search server | No changes | `src/kicad_agent/mcp/` |
+| `mcp/tools.py` | UNCHANGED: Component search tool implementations | No changes | `src/kicad_agent/mcp/` |
+| `mcp/__init__.py` | UNCHANGED: Package init | No changes | `src/kicad_agent/mcp/` |
+| `ops/schema.py` | UNCHANGED: Operation schema + `get_operation_schema()` | Imported, not modified | `src/kicad_agent/ops/` |
+| `ops/executor.py` | UNCHANGED: OperationExecutor dispatch engine | Imported, not modified | `src/kicad_agent/ops/` |
+| `pyproject.toml` | MODIFIED: Add `kicad-agent-edit` entry point | 1 line addition | Project root |
+| `context.py` | UNCHANGED: `render_project_context()` for project context | May be imported for context tool | `src/kicad_agent/` |
 
-## Feature Integration Plans
+### New vs Modified Files
 
-### Feature 1: Hierarchical Sheet Operations
+**New files (1):**
+- `src/kicad_agent/mcp/edit_server.py` -- Complete MCP edit server (~200-250 lines)
 
-**What:** `add_sheet` and `add_sheet_pin` operations to create and modify hierarchical schematic sheets.
+**Modified files (1):**
+- `pyproject.toml` -- Add entry point: `kicad-agent-edit = "kicad_agent.mcp.edit_server:main"`
 
-**KiCad Representation:**
-Sheets in `.kicad_sch` are `HierarchicalSheet` objects stored in `Schematic.sheets` (a list). Each sheet has:
-- `position` (Position), `width` (float), `height` (float)
-- `sheetName` (Property with key "Sheet name")
-- `fileName` (Property with key "Sheet file") -- the referenced `.kicad_sch` file
-- `pins` (list of `HierarchicalPin`) -- the connection points on the sheet symbol
-- `uuid`, `stroke`, `fill`, `properties`, `instances`
+**Total impact: ~250 lines new, 1 line modified. Zero risk to existing functionality.**
 
-**Integration approach:**
-
-1. **New schema module:** `ops/_schema_sheet.py`
-   - `AddSheetOp(BaseModel)`: op_type="add_sheet", target_file, sheet_name, file_name, position, width, height
-   - `AddSheetPinOp(BaseModel)`: op_type="add_sheet_pin", target_file, sheet_name (or sheet_uuid), pin_name, connection_type, position
-
-2. **New handler module:** `ops/sheet_ops.py`
-   - `add_sheet(op, ir, file_path)`: Creates a `HierarchicalSheet` via kiutils, appends to `ir.schematic.sheets`, creates the referenced sub-sheet file if it doesn't exist
-   - `add_sheet_pin(op, ir, file_path)`: Finds sheet by name, creates `HierarchicalPin`, appends to sheet.pins
-
-3. **Registry:** Both register as `_SCHEMATIC_HANDLERS`
-
-4. **SchematicIR additions:** None needed -- kiutils `Schematic.sheets` is already accessible via `ir.schematic`
-
-5. **Sub-sheet file creation:** `add_sheet` should auto-create the referenced `.kicad_sch` file using the existing `create_schematic()` from `create_file.py`. This is a cross-file concern but within the same project, so path resolution via `file_path.parent` suffices.
-
-**No new IR layer needed.** The kiutils `HierarchicalSheet` object is fully typed. The existing `SchematicIR.schematic` property provides direct access to `schematic.sheets`.
-
-**Dependencies:** None. Can be built independently.
+### Detailed Data Flow
 
 ```
-add_sheet flow:
-  Executor -> _dispatch("add_sheet") -> sheet_ops.add_sheet()
-    -> kiutils HierarchicalSheet(position, width, height, sheetName, fileName)
-    -> ir.schematic.sheets.append(sheet)
-    -> create_file.create_schematic(sub_sheet_path)  # auto-create sub-sheet
-    -> return {"sheet_name", "file_name", "pins": []}
+1. Server Startup:
+   edit_server.py loads
+     -> calls _build_tool_definitions()
+     -> Operation.model_json_schema() generates full schema
+     -> Iterates oneOf[0..56], extracts op_type consts, builds 57 types.Tool
+     -> Server registers list_tools() and call_tool() handlers
+
+2. Tool Discovery (list_tools):
+   MCP client sends tools/list request
+     -> Server returns 57 Tool objects with name, description, inputSchema, annotations
+
+3. Tool Invocation (call_tool):
+   MCP client sends tools/call with name="add_component" and arguments={...}
+     -> Server reconstructs Operation: {"root": {"op_type": "add_component", **arguments}}
+     -> Operation.model_validate(payload) -- Pydantic validates all fields
+     -> If validation fails: return error with field details
+     -> OperationExecutor(base_dir).execute(op)
+     -> Executor dispatches to _SCHEMATIC_HANDLERS["add_component"]
+     -> Handler: parse_schematic -> SchematicIR -> add_component -> serialize -> commit
+     -> Return result as types.TextContent(JSON)
+
+4. Error Handling:
+   - Pydantic ValidationError -> formatted error message with field details
+   - FileNotFoundError -> "Target file not found: ..."
+   - ValueError (security/path) -> "Security: path escapes project directory"
+   - ValueError (dispatch) -> "Unknown op_type: ..."
+   - Unexpected -> correlation ID + server log reference
 ```
 
-### Feature 2: Remove Operations (Wire, Label, Junction)
+### Project Directory Resolution
 
-**What:** `remove_wire`, `remove_label`, `remove_junction` operations -- the inverse of existing add operations.
+The component-search server does not need a project directory (it queries an external API). The edit server must know which project directory to operate on. Three options:
 
-**Integration approach:**
+| Option | How | Tradeoff |
+|--------|-----|----------|
+| **CLI argument** | `kicad-agent-edit --project-dir /path` | Simple, requires restart to change project |
+| **Environment variable** | `KICAD_PROJECT_DIR=/path kicad-agent-edit` | Standard, compatible with MCP client configs |
+| **Per-call argument** | Every tool includes `project_dir` field | Flexible, but redundant on every call |
 
-1. **Extend schema:** `ops/_schema_wire.py`
-   - `RemoveWireOp(BaseModel)`: op_type="remove_wire", target_file, start_x, start_y, end_x, end_y (match by coordinates) OR uuid
-   - `RemoveLabelOp(BaseModel)`: op_type="remove_label", target_file, name, label_type, position
-   - `RemoveJunctionOp(BaseModel)`: op_type="remove_junction", target_file, position
+**Recommendation: Environment variable with CLI argument fallback.** The server reads `KICAD_PROJECT_DIR` at startup. If not set, falls back to `--project-dir` argument. If neither, fails with clear error message. This matches how MCP clients configure server environments in their JSON config files (e.g., Claude Desktop's `claude_desktop_config.json`).
 
-2. **SchematicIR additions:**
-   - `remove_wire(start_x, start_y, end_x, end_y)`: Find Connection with type="wire" in `graphicalItems`, remove matching entry. Match by coordinates (within tolerance) or by UUID.
-   - `remove_label(name, label_type, x, y)`: Remove from appropriate list (`labels`, `globalLabels`, `hierarchicalLabels`)
-   - `remove_junction(x, y)`: Remove from `junctions` by position match
+### Server Lifespan
 
-3. **Registry:** All three register as `_SCHEMATIC_HANDLERS`
-
-4. **Matching strategy:** Position-based matching with tolerance (0.01mm grid snap). UUID matching as optional alternative for unambiguous removal.
-
-**Dependencies:** None. Can be built independently.
-
-```
-remove_wire flow:
-  Executor -> _dispatch("remove_wire") -> handler calls ir.remove_wire()
-    -> iterate graphicalItems, find Connection with type="wire"
-    -> match by coordinates (within tolerance) or UUID
-    -> remove from list, record mutation
-    -> return {"removed": true, "start": [...], "end": [...]}
+```python
+@asynccontextmanager
+async def server_lifespan(server: Server):
+    """Initialize OperationExecutor once, share across all tool calls."""
+    project_dir = Path(os.environ.get("KICAD_PROJECT_DIR", ".")).resolve()
+    if not project_dir.is_dir():
+        raise RuntimeError(f"Project directory does not exist: {project_dir}")
+    executor = OperationExecutor(base_dir=project_dir)
+    yield {"executor": executor, "project_dir": project_dir}
 ```
 
-### Feature 3: Footprint Creation
+### call_tool Implementation
 
-**What:** `create_footprint` operation -- mirrors existing `create_symbol` but for `.kicad_mod` files.
+The core routing function is simple because all operations go through a single executor:
 
-**KiCad Representation:**
-Footprints are stored as individual `.kicad_mod` files (one footprint per file) OR within `.kicad_sym`-style library collections. The kiutils `Footprint` dataclass has fields: `libraryNickname`, `entryName`, `layer`, `position`, `properties` (dict), `pads`, `graphicItems`, `zones`, `models`, etc.
+```python
+@app.call_tool()
+async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextContent]:
+    lifespan_ctx = app.request_context.lifespan_context
+    executor: OperationExecutor = lifespan_ctx["executor"]
 
-**Integration approach:**
+    # Reconstruct Operation envelope for Pydantic validation
+    payload = {"root": {"op_type": name, **arguments}}
 
-1. **Extend schema:** `ops/_schema_create.py`
-   - `CreateFootprintOp(BaseModel)`: op_type="create_footprint", target_file, footprint_name, pads (list of PadSpec), courtyards, reference_prefix, value
-   - New `FootprintPadSpec` for footprint pads (different fields than symbol pins): number, shape, size_x, size_y, drill_diameter, pad_type, layer_set
+    try:
+        op = Operation.model_validate(payload)
+    except ValidationError as e:
+        return [types.TextContent(type="text", text=f"Validation error: {e}")]
 
-2. **Extend create handler:** `ops/create_file.py`
-   - `create_footprint(op, file_path)`: Create kiutils `Footprint`, set properties, add pads, write to file
-   - Follow same pattern as `create_symbol`: if file exists, check for duplicate name; if not, create fresh
-
-3. **Registry:** Register in `_CREATE_HANDLERS`, add "create_footprint" to `_CREATE_OP_TYPES`
-
-4. **Serializer:** Already exists in `serializer/footprint_ser.py` for footprint files
-
-**Important distinction from create_symbol:** Footprint pads have physical properties (drill size, copper layers, pad shape) that symbol pins do not. The PadSpec for footprints needs different fields.
-
-**Dependencies:** None. Can be built independently.
-
-```
-create_footprint flow:
-  Executor -> _execute_create(op, file_path)
-    -> create_file.create_footprint(op, file_path)
-    -> kiutils Footprint(libraryNickname, entryName, layer="F.Cu")
-    -> Add Reference/Value properties
-    -> Build pads from op.pads
-    -> Footprint.to_file()
-    -> return {"footprint_name", "pad_count"}
+    try:
+        result = await asyncio.to_thread(executor.execute, op)
+        return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+    except FileNotFoundError as e:
+        return [types.TextContent(type="text", text=f"File not found: {e}")]
+    except ValueError as e:
+        return [types.TextContent(type="text", text=f"Error: {e}")]
+    except Exception as e:
+        correlation_id = str(uuid.uuid4())[:8]
+        logger.exception("Tool %s failed [ref=%s]", name, correlation_id)
+        return [types.TextContent(
+            type="text",
+            text=f"Internal error (ref: {correlation_id}). See server logs.",
+        )]
 ```
 
-### Feature 4: Connectivity Query
+### Integration with Existing Component-Search Server
 
-**What:** Read-only operation to query net connectivity. Exposes existing `NetGraph` from `analysis/connectivity.py`.
+The two servers are **completely independent** at runtime:
 
-**Integration approach:**
+| Aspect | Component Search | Edit Server |
+|--------|-----------------|-------------|
+| Entry point | `kicad-component-search` | `kicad-agent-edit` |
+| Transport | stdio | stdio |
+| Shared code | None (independent) | None (independent) |
+| Dependencies | `EasyEdaClient` (network) | `OperationExecutor` (local files) |
+| State | API client + cache | Executor + project dir |
+| Error domain | API failures, rate limits | File I/O, validation, security |
 
-1. **New schema module:** `ops/_schema_query.py`
-   - `QueryConnectivityOp(BaseModel)`: op_type="query_connectivity", target_file (must be .kicad_pcb), query_type (one of: "net_pads", "path", "components", "stats"), parameters (query-specific: net_name, source_pad, target_pad)
+They share:
+- The `kicad_agent` package namespace
+- The `mcp` optional dependency group in `pyproject.toml`
+- The same `mcp` SDK version
 
-2. **New handler module:** `ops/connectivity_query.py`
-   - Build `NetGraph.from_pcb_ir(ir)` inside handler
-   - Dispatch by query_type:
-     - "net_pads": `graph.get_connected_pads(net_name)`
-     - "path": `graph.shortest_path(source, target)`
-     - "components": `graph.get_connectivity_components()`
-     - "stats": `graph.get_net_stats()`
+**MCP client configuration (Claude Desktop example):**
 
-3. **Registry:** Register in `_PCB_HANDLERS` (targets .kicad_pcb files)
-
-4. **Read-only semantics:** This operation does NOT mutate the IR. No `_record_mutation()` call. The Transaction still wraps it (executor pattern), but the commit just cleans up the snapshot without changes.
-
-**Why not a separate read-only registry:** Adding a 5th registry for read-only ops would add complexity for no benefit. The existing Transaction pattern handles non-mutations correctly -- the snapshot is taken and discarded on commit, which is a clean no-op. Keeping it in `_PCB_HANDLERS` follows the established pattern.
-
-**Dependencies:** None. Can be built independently.
-
-```
-query_connectivity flow:
-  Executor -> _execute_pcb(op, file_path)
-    -> parse_pcb, build PcbIR
-    -> Transaction wraps (no mutation will occur)
-    -> connectivity_query.handle(op, ir, file_path)
-      -> NetGraph.from_pcb_ir(ir)
-      -> dispatch by query_type
-      -> return results dict
-    -> serialize (no-op, no changes)
-    -> Transaction.commit()
+```json
+{
+  "mcpServers": {
+    "kicad-component-search": {
+      "command": "kicad-component-search"
+    },
+    "kicad-agent-edit": {
+      "command": "kicad-agent-edit",
+      "env": {
+        "KICAD_PROJECT_DIR": "/Users/bret/projects/my-pcb-project"
+      }
+    }
+  }
+}
 ```
 
-### Feature 5: Cross-file Wiring
+### Operation Category Reference
 
-**What:** Wire `crossfile/atomic.py` to the executor so operations can atomically modify multiple files.
+For the Roadmapper, here is the complete mapping of 62 handler registrations across 57 operation types (some ops register in both schematic and PCB registries):
 
-**The core problem:** The executor currently handles one file per operation. `AtomicOperation` already exists and handles multi-file transactions, but no operation uses it. The wiring requires a new execution path.
+| Registry | Count | Operations |
+|----------|-------|------------|
+| `_SCHEMATIC_HANDLERS` | 41 | add_component, remove_component, duplicate_component, array_replicate, move_component, modify_property, add_net, remove_net, rename_net, renumber_refs, validate_refs, annotate, cross_ref_check, assign_footprint, swap_footprint, validate_footprint, verify_pin_map, add_wire, add_label, add_power, add_no_connect, add_junction, repair_schematic, validate_power_nets, validate_schematic, parse_erc, extract_violation_positions, validate_hlabels, convert_kicad6_to_10, snap_to_grid, add_power_flag, rebuild_root_sheet, embed_symbol, swap_symbol, remove_wire, remove_label, remove_junction, remove_no_connect, add_sheet, add_sheet_pin, navigate_hierarchy |
+| `_PCB_HANDLERS` | 10 | update_footprint_from_library, swap_footprint, add_net, remove_net, rename_net, validate_footprint, add_copper_zone, set_board_outline, assign_net_class, auto_route |
+| `_PROJECT_HANDLERS` | 4 | add_lib_entry, remove_lib_entry, add_net_class, add_design_rule |
+| `_CREATE_HANDLERS` | 5 | create_schematic, create_pcb, create_project, create_symbol, create_footprint |
+| `_QUERY_HANDLERS` | 1 | query_connectivity |
+| `_CROSSFILE_HANDLERS` | 1 | propagate_symbol_change |
 
-**Integration approach:**
+Note: `add_net`, `remove_net`, `rename_net`, `swap_footprint`, `validate_footprint` have handlers in both schematic and PCB registries. The executor routes by file extension (`.kicad_pcb` goes to `_PCB_HANDLERS`, everything else to `_SCHEMATIC_HANDLERS`). The MCP server does not need to know about this -- the executor handles it internally.
 
-1. **New execution path in executor:** `_execute_cross_file()`
-   - Triggered by operations with `op_type` in a new `_CROSS_FILE_OP_TYPES` set
-   - Coordinates parsing multiple files, building IRs, calling handlers, serializing all files
-   - Uses `AtomicOperation` for rollback coordination
+### Optional: Context Tool
 
-2. **New handler registry:** `_CROSS_FILE_HANDLERS`
-   - Handlers receive `dict[Path, BaseIR]` instead of single IR
-   - Handler signature: `(op, ir_map, base_dir) -> dict`
+Consider adding a `get_project_context` tool that calls `render_project_context()` from `context.py`. This gives AI agents a way to discover what files exist in the project and their contents before issuing edit operations. This is a natural complement to the editing tools.
 
-3. **New schema:** `ops/_schema_crossfile.py`
-   - `SyncSchematicPcbOp`: op_type="sync_schematic_pcb", schematic_file, pcb_file -- sync net names between schematic and PCB
-   - `PropagateLibRefOp`: op_type="propagate_lib_ref", target_files, old_ref, new_ref -- propagate a library reference change across files
-
-4. **Executor changes:**
-   ```python
-   _CROSS_FILE_OP_TYPES = {"sync_schematic_pcb", "propagate_lib_ref"}
-
-   def execute(self, op):
-       # ... existing path confinement ...
-       if root.op_type in _CROSS_FILE_OP_TYPES:
-           return self._execute_cross_file(op, file_path)
-       # ... rest of existing logic ...
-   ```
-
-5. **_execute_cross_file implementation:**
-   ```python
-   def _execute_cross_file(self, op, file_path):
-       # 1. Determine file paths from operation
-       file_paths = self._resolve_cross_file_paths(op)
-       # 2. Parse all files, build IR map
-       ir_map = {}
-       for fp in file_paths:
-           parse_result = parse_schematic(fp) or parse_pcb(fp)
-           ir_map[fp] = build_ir(parse_result)
-       # 3. Open AtomicOperation for all files
-       with AtomicOperation(file_paths) as atomic:
-           details = handler(op, ir_map, self._base_dir)
-           # Serialize all modified IRs
-           for fp, ir in ir_map.items():
-               if ir.dirty:
-                   serialize(ir, fp)
-           result = atomic.commit()
-       return {...}
-   ```
-
-6. **Wire existing propagation functions:** `crossfile/propagation.py` already has `propagate_symbol_ref()` and `propagate_footprint_ref()`. These become the handler implementations for `propagate_lib_ref`.
-
-**Dependencies:** This is the most complex feature. It depends on `crossfile/atomic.py` (built), `crossfile/propagation.py` (built), and requires executor modifications. It should be built LAST.
-
+```python
+types.Tool(
+    name="get_project_context",
+    description="Get an overview of all KiCad files in the project directory...",
+    inputSchema={"type": "object", "properties": {}, "required": []},
+    annotations=types.ToolAnnotations(readOnlyHint=True),
+)
 ```
-propagate_lib_ref flow:
-  Executor -> _execute_cross_file(op)
-    -> resolve file paths (schematic + pcb)
-    -> parse both files, build ir_map
-    -> AtomicOperation wraps both files
-    -> handler calls propagate_symbol_ref() + propagate_footprint_ref()
-    -> serialize both files if dirty
-    -> AtomicOperation.commit()
-    -> return {"schematic_updated": N, "pcb_updated": M}
-```
+
+This would bring the total to 58 tools. It can be added in a follow-up phase.
 
 ## Patterns to Follow
 
-### Pattern 1: Schema Sub-module Extension
-**What:** Each operation domain gets its own `_schema_*.py` file imported by `schema.py`
-**When:** Adding any new operation type
-**Example:**
+### Pattern 1: Low-Level Server API (Match Existing)
+
+Use `mcp.server.Server` (not `FastMCP`) to match the existing component-search server pattern. This keeps the two servers structurally consistent and avoids introducing a second MCP API style into the codebase.
+
 ```python
-# ops/_schema_sheet.py
-class AddSheetOp(BaseModel):
-    op_type: Literal["add_sheet"] = "add_sheet"
-    target_file: TargetFile
-    sheet_name: str = Field(min_length=1, max_length=128)
-    file_name: str = Field(min_length=1, max_length=256)
-    position: PositionSpec
-    width: float = Field(default=30.0, gt=0, le=500)
-    height: float = Field(default=20.0, gt=0, le=500)
+from mcp.server import Server
+from mcp.server.stdio import stdio_server
+
+app = Server("kicad-agent-edit", version="0.1.0", lifespan=server_lifespan)
 ```
 
-### Pattern 2: Handler Registration
-**What:** Decorator-based registration in executor.py
-**When:** Adding any new operation handler
-**Example:**
+### Pattern 2: Schema-Driven Tool Generation
+
+Generate tool definitions from the Pydantic schema rather than hand-writing them. This ensures tools stay in sync with the operation schema automatically.
+
 ```python
-@register_schematic("add_sheet")
-def _handle_add_sheet(op: Any, ir: SchematicIR, file_path: Path) -> dict[str, Any]:
-    from kicad_agent.ops.sheet_ops import add_sheet
-    return add_sheet(op, ir, file_path)
+schema = Operation.model_json_schema()
+for variant in schema["properties"]["root"]["oneOf"]:
+    # Extract tool name, inputSchema, description from schema
+    ...
 ```
 
-### Pattern 3: IR Mutation Method
-**What:** All mutations go through IR methods that call `_record_mutation()`
-**When:** Adding any data-modifying capability
-**Example:**
+### Pattern 3: Sync-to-Async Bridge
+
+Wrap synchronous `OperationExecutor.execute()` calls in `asyncio.to_thread()` to avoid blocking the MCP event loop. This matches the existing pattern in `server.py`.
+
 ```python
-def remove_wire(self, start_x, start_y, end_x, end_y) -> dict[str, Any]:
-    # ... find and remove matching wire ...
-    self._record_mutation("remove_wire", {"start": [...], "end": [...]})
-    return {"removed": True, ...}
+result = await asyncio.to_thread(executor.execute, op)
 ```
 
-### Pattern 4: Lazy Import in Handlers
-**What:** Handler functions use lazy imports for their implementation modules
-**When:** Always (avoids circular imports, keeps executor lightweight)
-**Example:** `from kicad_agent.ops.sheet_ops import add_sheet` inside the handler function body
+### Pattern 4: Envelope Reconstruction
+
+MCP tools receive `arguments` as a flat dict. The Pydantic `Operation` model expects `{"root": {"op_type": ..., ...}}`. The server reconstructs this envelope before validation.
+
+```python
+payload = {"root": {"op_type": name, **arguments}}
+op = Operation.model_validate(payload)
+```
+
+### Pattern 5: Correlated Error Responses
+
+Use UUID correlation IDs for unexpected errors (matching existing server pattern). This allows log lookup without exposing internals.
+
+```python
+correlation_id = str(uuid.uuid4())[:8]
+logger.exception("Tool %s failed [ref=%s]", name, correlation_id)
+return [types.TextContent(type="text", text=f"Internal error (ref: {correlation_id})")]
+```
 
 ## Anti-Patterns to Avoid
 
-### Anti-Pattern 1: New IR Layer for Sheets
-**What:** Creating a SheetIR class separate from SchematicIR
-**Why bad:** kiutils `HierarchicalSheet` is a child of `Schematic`, not a separate file type. Sheets are stored within `.kicad_sch` files. A separate IR would break the one-IR-per-ParseResult invariant enforced by `BaseIR.__post_init__`.
-**Instead:** Access sheets through `SchematicIR.schematic.sheets` property, add mutation methods to SchematicIR.
+### Anti-Pattern 1: FastMCP for This Server
 
-### Anti-Pattern 2: Cross-file Operations Without AtomicOperation
-**What:** Having handlers directly call propagation functions without atomic coordination
-**Why bad:** If the schematic update succeeds but the PCB update fails, references are inconsistent with no rollback.
-**Instead:** Always use `crossfile.AtomicOperation` for multi-file operations. The infrastructure is already built.
+**What:** Using `FastMCP` with `@mcp.tool()` decorators for 57 operations.
+**Why bad:** Would require 57 decorated functions or dynamic function generation at module level. The low-level `Server` API with a single `call_tool()` dispatch is cleaner because all 57 operations go through one `OperationExecutor.execute()` call. FastMCP adds decorator overhead with no benefit when the dispatch target is a single function.
+**Instead:** Use low-level `Server` with `call_tool()` handler that routes all tools through `OperationExecutor`.
 
-### Anti-Pattern 3: Separate Read-only Executor Path
-**What:** Adding a `_READ_ONLY_HANDLERS` registry that skips Transaction wrapping
-**Why bad:** Creates two execution paths for no real benefit. Transaction on a non-mutated file is a clean no-op (snapshot created and discarded). The existing path handles it correctly.
-**Instead:** Register read-only operations in the appropriate existing registry (`_PCB_HANDLERS` for connectivity).
+### Anti-Pattern 2: Manual Tool Definitions
 
-### Anti-Pattern 4: Footprint Pads Reusing Symbol PinSpec
-**What:** Using the existing `PinSpec` from schema.py for footprint pad definitions
-**Why bad:** Symbol pins have electrical_type and graphical_style. Footprint pads have shape (SMD/Thru-Hole/Connect), drill diameter, copper layers, and pad-to-net assignments. The fields are fundamentally different.
-**Instead:** Create a new `FootprintPadSpec` in `_schema_create.py` with pad-specific fields.
+**What:** Writing 57 `types.Tool(...)` objects by hand like the component-search server does for 4 tools.
+**Why bad:** Error-prone, will drift from schema, 57x the maintenance burden. The Pydantic schema already contains all field names, types, descriptions, and validation rules.
+**Instead:** Generate tool definitions dynamically from `Operation.model_json_schema()` at startup.
+
+### Anti-Pattern 3: Merged Server Binary
+
+**What:** Adding editing tools to the existing `kicad-component-search` server.
+**Why bad:** The component-search server has no concept of a project directory (it queries an external API). Adding one would break its simplicity. The two servers have completely different dependency trees (network client vs. file mutation engine). Merging creates an unnecessarily large attack surface.
+**Instead:** Separate binary with separate entry point.
+
+### Anti-Pattern 4: Exposing Executor Internals
+
+**What:** Having the MCP server expose registry categories, IR types, or Transaction details to the AI client.
+**Why bad:** These are implementation details. The AI client should only know about operations and their parameters. Leaking internals couples the MCP interface to the implementation.
+**Instead:** The MCP server's interface is strictly: tool name = op_type, tool arguments = operation fields (minus op_type). All dispatch, IR construction, and transaction management is invisible to the client.
+
+### Anti-Pattern 5: Per-Tool Handler Functions
+
+**What:** Writing 57 individual handler functions in the MCP server, one per operation.
+**Why bad:** Every handler would do the same thing: reconstruct the Operation envelope, validate it, call executor.execute(). This is 57 copies of the same 5-line function.
+**Instead:** Single `call_tool()` handler that works for all 57 tools by reconstructing the envelope from the tool name.
 
 ## Scalability Considerations
 
-| Concern | Current | After complete-ops | Impact |
-|---------|---------|-------------------|--------|
-| Operation count | 47 types | ~54 types (+7) | Minimal -- dict dispatch is O(1) |
-| Executor imports | ~20 lazy imports | ~27 lazy imports | No performance impact (all lazy) |
-| Schema union size | ~35 Op variants | ~42 Op variants | Pydantic union discrimination still fast |
-| Cross-file ops | 0 | 2-3 | New execution path but isolated |
+| Concern | At 57 tools | At 100+ tools | Mitigation |
+|---------|------------|---------------|------------|
+| Tool listing response size | ~30KB JSON | ~50KB JSON | MCP protocol handles this fine |
+| Schema generation time | <50ms (startup) | <100ms | One-time cost at server startup |
+| Pydantic validation | <5ms per call | <10ms per call | Negligible vs. file I/O |
+| Executor dispatch | O(1) dict lookup | O(1) dict lookup | Dict-based, no scalability concern |
+| MCP client tool menu | 57 items is manageable | May need categorization | Not a concern at current scale |
 
 ## Build Order (Dependency-Aware)
 
-The build order respects the constraint that cross-file wiring requires executor modifications and should come last. The other four features are independent and can be built in any order.
-
 ```
-Phase A (independent, any order):
-  1. Remove operations (wire, label, junction)
-     - Extend _schema_wire.py
-     - Add methods to SchematicIR
-     - Register in executor
-     - Tests
+Phase 1: Server Skeleton (no dependencies)
+  [NEW] src/kicad_agent/mcp/edit_server.py
+    - Server setup with lifespan (project dir resolution)
+    - _build_tool_definitions() using Operation.model_json_schema()
+    - call_tool() with envelope reconstruction + executor dispatch
+    - Error handling with correlation IDs
+    - _run_server() + main() entry point
+  [MOD] pyproject.toml
+    - Add: kicad-agent-edit = "kicad_agent.mcp.edit_server:main"
+  Estimated: ~250 lines new, 1 line modified
 
-  2. Footprint creation
-     - Add FootprintPadSpec to _schema_create.py
-     - Add create_footprint to create_file.py
-     - Register in executor, add to _CREATE_OP_TYPES
-     - Tests
+Phase 2: Tool Annotations (depends on Phase 1)
+  [MOD] src/kicad_agent/mcp/edit_server.py
+    - Add _build_annotations() categorizing read-only vs destructive ops
+    - Apply annotations during tool generation
+  Estimated: ~30 lines modified
 
-  3. Connectivity query
-     - Create _schema_query.py
-     - Create connectivity_query.py handler
-     - Register in executor as PCB handler
-     - Tests (NetGraph already tested)
+Phase 3: Context Tool (optional, depends on Phase 1)
+  [MOD] src/kicad_agent/mcp/edit_server.py
+    - Add get_project_context tool (read-only, wraps context.py)
+  Estimated: ~20 lines added
 
-  4. Hierarchical sheet operations
-     - Create _schema_sheet.py
-     - Create sheet_ops.py handler
-     - Register in executor
-     - Tests
-
-Phase B (depends on executor being stable):
-  5. Cross-file wiring
-     - Create _schema_crossfile.py
-     - Add _execute_cross_file() to executor
-     - Create cross-file handlers using AtomicOperation + propagation
-     - Integration tests
+Phase 4: Integration Tests (depends on Phase 1)
+  [NEW] tests/test_mcp_edit_server.py
+    - Test tool generation produces 57 tools
+    - Test tool names match op_type values
+    - Test envelope reconstruction
+    - Test read-only annotations on validation ops
+    - Test destructive annotations on remove ops
+    - Test error handling paths
+    - Test end-to-end: call_tool -> executor -> result
+  Estimated: ~200 lines new
 ```
 
 **Rationale for ordering:**
-- Remove operations and footprint creation are the simplest (extend existing modules)
-- Connectivity query is simple but creates a new schema module
-- Sheet operations are the most complex of the independent features (new module + auto-create sub-sheets)
-- Cross-file wiring touches the executor core and must come last
+- Phase 1 is the core deliverable. It can be built and tested independently.
+- Phase 2 is additive (annotations are optional in MCP spec).
+- Phase 3 is a nice-to-have that adds project discovery capability.
+- Phase 4 validates everything but depends on Phase 1 existing.
 
-## Impact on Existing Code
+## Dependency Graph
 
-| File Modified | Lines Changed (est.) | Risk |
-|---------------|----------------------|------|
-| `ops/executor.py` | +50 (new handlers, cross-file path) | LOW (additive, no existing code changes) |
-| `ops/schema.py` | +30 (imports, union variants, __all__) | LOW (additive) |
-| `ops/_schema_wire.py` | +50 (3 new Op classes) | LOW (additive) |
-| `ops/_schema_create.py` | +40 (1 new Op class + PadSpec) | LOW (additive) |
-| `ir/schematic_ir.py` | +60 (3 remove methods) | LOW (additive, no existing method changes) |
-| **Total modified** | ~230 lines across 5 files | **LOW risk** |
-| **Total new** | ~400 lines across 5 new files | **No risk to existing** |
+```
+pyproject.toml (entry point)
+    |
+    v
+edit_server.py
+    |-- imports from kicad_agent.ops.schema (Operation, get_operation_schema)
+    |-- imports from kicad_agent.ops.executor (OperationExecutor)
+    |-- imports from mcp SDK (types, Server, stdio_server)
+    |
+    +-- OperationExecutor (existing, no changes)
+    |       |-- dispatches to 6 handler registries
+    |       |-- wraps in Transaction for rollback
+    |       |-- path confinement security check
+    |       +-- returns standardized result dict
+    |
+    +-- get_operation_schema() (existing, no changes)
+            |-- Pydantic model_json_schema()
+            +-- returns JSON Schema with 57 oneOf variants
+```
+
+No existing code needs modification except `pyproject.toml`. The new server is purely additive.
+
+## Security Considerations
+
+The existing security mitigations in the operation layer carry through automatically:
+
+| Mitigation | Where Enforced | MCP Layer Concern |
+|------------|---------------|-------------------|
+| Path traversal rejection | `TargetFile` validator in schema.py | None -- enforced before executor sees it |
+| Absolute path rejection | `TargetFile` validator in schema.py | None |
+| Path confinement | `OperationExecutor._base_dir` check | Project dir set at server startup |
+| Unsafe character rejection | `_validate_safe_identifier()` in schema.py | None -- Pydantic validates |
+| S-expression safety | `_validate_sexpr_safe_string()` in schema.py | None -- Pydantic validates |
+| Null byte rejection | `TargetFile` validator in schema.py | None |
+| String length limits | `Field(max_length=N)` on all fields | None -- Pydantic validates |
+
+The MCP server adds one new security concern: **project directory confinement**. The `KICAD_PROJECT_DIR` environment variable must resolve to an actual directory. The server validates this at startup and refuses to start if invalid. All file operations are then relative to this directory.
 
 ## Sources
 
-- Direct codebase analysis of all files in `src/kicad_agent/`
-- kiutils `HierarchicalSheet` dataclass fields (verified via Python introspection)
-- kiutils `Footprint` dataclass fields (verified via Python introspection)
-- KNOWN_LIMITATIONS.md from Council audit (H-1, M-1, M-3, M-4, M-6)
+- Direct codebase analysis: `src/kicad_agent/mcp/server.py` (284 lines), `src/kicad_agent/mcp/tools.py` (336 lines)
+- Operation schema: `src/kicad_agent/ops/schema.py` (433 lines), 14 sub-schema modules
+- Operation executor: `src/kicad_agent/ops/executor.py` (1090 lines), 62 handler registrations across 6 registries
+- MCP Python SDK v1.12.3: `types.Tool` with `annotations` param, `types.ToolAnnotations` with `readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint`
+- MCP specification: tool annotations protocol (verified SDK support)
+- pyproject.toml entry point pattern (existing: `kicad-component-search`)

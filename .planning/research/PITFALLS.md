@@ -1,9 +1,9 @@
-# Domain Pitfalls -- Milestone v2.2 complete-ops
+# Domain Pitfalls -- MCP Operations Server
 
-**Domain:** Adding hierarchical sheets, remove operations, footprint creation, connectivity query, and cross-file wiring to kicad-agent
+**Domain:** Exposing kicad-agent's 57 synchronous operations as an MCP tool server for LLM consumption
 **Researched:** 2026-05-29
-**Context:** Mature project (24 phases, 1567 tests, security-hardened). This document covers pitfalls SPECIFIC to adding these five feature groups.
-**Confidence:** HIGH (verified against kiutils 1.4.8 source, existing codebase patterns, Council review findings, KiCad file format docs)
+**Context:** The existing kicad-agent has 57 atomic operations (Pydantic schemas, OperationExecutor dispatch, IR mutation pipeline) all purely synchronous. This document covers pitfalls SPECIFIC to wrapping this synchronous library as an MCP tool server.
+**Confidence:** HIGH (verified against MCP Python SDK 1.12.3 source, existing server.py patterns, live schema measurements)
 
 ---
 
@@ -13,173 +13,152 @@ Mistakes that cause rewrites or major issues.
 
 ---
 
-### Pitfall 1: Sheet Pin Names Must Match Hierarchical Labels Exactly -- Case-Sensitive, No Fuzzy Matching
+### Pitfall 1: Synchronous OperationExecutor Blocks the Async MCP Event Loop
 
 **What goes wrong:**
-A sheet pin named "SDA" in the parent sheet will not connect to a hierarchical label named "sda" or " SDA" in the child sheet. KiCad's electrical connectivity between parent and child sheets depends on EXACT string match between `HierarchicalPin.name` and the child's `HierarchicalLabel.text`. The ERC will report "Pin not connected" and the netlist will show an open circuit.
+`OperationExecutor.execute()` is a synchronous method that performs file I/O (read KiCad file, parse S-expressions into IR, mutate IR, serialize IR, write file back). A typical operation takes 10-200ms. If called directly from the MCP `call_tool` handler without `asyncio.to_thread()`, it blocks the async event loop for that entire duration. During blocking, the MCP server cannot respond to `list_tools` requests, `ping` health checks, or any other tool calls. The client perceives this as a frozen server and may timeout the connection.
 
 **Why it happens:**
-The developer assumes KiCad does case-insensitive matching or trims whitespace. It does not. The S-expression format stores both strings as quoted values with no normalization. The `root_sheet.py` module already has this pattern correct (line 98-99 reads `label.text` directly) but the `add_sheet_pin` operation will receive the pin name from LLM JSON, which may not exactly match the child's hierarchical labels.
+The developer sees that `call_tool` is an `async def` and writes `result = executor.execute(op)` without wrapping. Python does not warn about blocking calls inside async functions. The server appears to work for single requests but hangs under concurrent load or when the client sends a pipelined request (list_tools + call_tool in quick succession).
 
 **Consequences:**
-- Silent connectivity breaks -- ERC may not catch a mismatched pin if both the pin and label exist independently (pin is "connected" to nothing, label is "unconnected")
-- Netlist differs from visual intent
-- Debugging requires opening both files and comparing strings manually
+- MCP client timeouts on operations that take >30 seconds (large PCB files)
+- Server becomes unresponsive to health checks, client assumes server crashed
+- JSON-RPC message queue fills up while event loop is blocked
+- Debugging is difficult because the issue only manifests under concurrent load
 
 **Prevention:**
-1. `add_sheet_pin` MUST validate that the pin name matches an existing hierarchical label in the child sheet file before accepting the operation
-2. Use exact `==` comparison, never `.lower()` or `.strip()`
-3. Test: create a sub-sheet with hierarchical label "VCC", attempt `add_sheet_pin` with name "vcc" -- must fail with descriptive error
+1. Wrap EVERY `executor.execute()` call in `asyncio.to_thread(executor.execute, op)` -- same pattern as existing `server.py` line 170
+2. Do NOT use `asyncio.to_thread()` for validation-only code (Pydantic `model_validate` is fast and can stay on the event loop)
+3. Test with a concurrent load: send 5 operations simultaneously, verify all complete without timeout
+4. Measure blocking time: log `time.monotonic()` before and after `asyncio.to_thread()`, flag anything over 5 seconds
 
 **Detection:**
-ERC on parent sheet will report unconnected sheet pins. But only if the child sheet is also ERC'd.
+If the MCP client reports timeouts on `tools/call` requests, the executor is blocking the event loop. Add `logging.debug("execute start")` / `logging.debug("execute end")` around the `to_thread` call to verify it is actually being awaited.
+
+**Phase to address:** First implementation phase -- the async wrapping must be correct from the first line of `call_tool`.
 
 ---
 
-### Pitfall 2: Sheet fileName Property Must Be Relative to Parent -- Not to Project Root
+### Pitfall 2: Error Responses Never Set isError=True, Breaking MCP Client Error Handling
 
 **What goes wrong:**
-The `HierarchicalSheet.fileName` property stores the sub-sheet file path relative to the PARENT schematic's directory, NOT relative to the project root. In a flat project structure this distinction is invisible. In a hierarchical project with nested sub-sheets (e.g., `power/power_supply.kicad_sch` referenced from `root.kicad_sch`), using the wrong base directory produces a path that looks correct but resolves to a nonexistent file.
+MCP clients (Claude Desktop, Cursor, etc.) use the `CallToolResult.isError` field to determine whether a tool call succeeded or failed. When `isError=True`, the client typically displays the error to the user and may retry or abort. When `isError=False` (or absent), the client treats the response as a successful result and may pass it to the LLM as-is.
+
+The existing `server.py` (line 247-259) returns `[types.TextContent(type="text", text=f"Error: {e}")]` for all errors. The MCP Python SDK wraps this in `CallToolResult(isError=False, content=[...])`. The client sees a "successful" response containing the error text. The LLM receives error text as if it were a valid operation result, which confuses its reasoning about what happened.
 
 **Why it happens:**
-`root_sheet.py` line 77 already handles this correctly (`root_sch_path.resolve().parent / sheet_file_name`). But `add_sheet` is a CREATE operation -- it must generate this path. The LLM may provide a project-root-relative path when the parent is in a subdirectory, or the developer may use `base_dir` instead of `parent_file_dir` when resolving.
+The low-level `Server.call_tool` decorator in MCP SDK 1.12.3 auto-wraps the returned content in `CallToolResult(isError=False)`. To signal an error, the handler must explicitly return `types.CallToolResult(isError=True, content=[...])` instead of just `[types.TextContent(...)]`. The existing component-search server never does this.
 
 **Consequences:**
-- Sheet reference in the S-expression points to a nonexistent file
-- KiCad opens the project but the sub-sheet is "missing"
-- Subsequent operations that try to parse the sub-sheet fail with FileNotFoundError
-- The `root_sheet.py` rebuild_root_sheet operation will skip the sheet with a warning (line 80-82)
+- LLM receives error messages as successful tool results and tries to reason about them as data
+- Client-side error handling (retry logic, error display) is bypassed
+- Validation errors ("target_file contains unsafe characters") appear as successful text output
+- Makes debugging harder because no tool call is ever "failed" from the client perspective
 
 **Prevention:**
-1. `add_sheet` operation must accept a relative file path and resolve it relative to the PARENT file's directory, not `base_dir`
-2. Validate that the referenced file either exists or will be created in the same operation
-3. Test with nested hierarchy: root -> subdir/child -> subdir/subsubdir/grandchild
-4. Document the resolution rule clearly in the Pydantic model docstring
+1. For validation errors (Pydantic `ValidationError`, `ValueError`): return `CallToolResult(isError=True, content=[TextContent(type="text", text=error_message)])`
+2. For executor errors (file not found, security violations): return `CallToolResult(isError=True, content=[TextContent(type="text", text=error_message)])`
+3. For internal/unexpected errors: return `CallToolResult(isError=True, content=[TextContent(type="text", text=f"Internal error (ref: {correlation_id})")])`
+4. Only return `isError=False` (or just `[TextContent]`) for genuinely successful operation results
+5. Write a helper function `_error_response(message: str, is_error: bool = True) -> CallToolResult` to enforce consistency
 
 **Detection:**
-After `add_sheet`, verify the resolved path exists. If it does not, the operation should either fail or be paired with `create_schematic` for the child.
+Log every `call_tool` response with its `isError` status. After testing, grep logs for "isError=False" entries that contain error-related text (e.g., "not found", "validation", "error").
+
+**Phase to address:** First implementation phase -- build the error response helper before writing any tool handlers.
 
 ---
 
-### Pitfall 3: Sheet Instances Must Be Updated When Adding/Removing Sheets
+### Pitfall 3: 57 Individual Tool Schemas Sum to 68KB -- Client Context Window Overhead
 
 **What goes wrong:**
-Every hierarchical sheet in a KiCad schematic has a corresponding entry in the `sheetInstances` list of the root schematic. Adding a sheet without adding a sheet_instance entry, or removing a sheet without cleaning up the instance, causes KiCad to report "Sheet instance not found" or duplicate page numbers.
+MCP clients receive the complete tool list (all 57 tools with their inputSchemas) during initialization and include it in every LLM context window. The combined schema size is 68KB of JSON. At 4 characters per token (rough estimate), this is ~17,000 tokens of context overhead before any user request. For operations-heavy sessions, the LLM spends significant context budget on tool definitions it may never use.
+
+Individual tool schemas range from 456 bytes (`navigate_hierarchy`) to 5,411 bytes (`create_footprint`), averaging 1,192 bytes each. The full `Operation` discriminated union schema (all 57 in one object) is 67.9KB with 61 `$defs` entries -- even larger.
 
 **Why it happens:**
-The `remove_component.py` pattern (line 64-69) correctly cleans up `symbolInstances`. But the executor does NOT have an analogous pattern for `sheetInstances`. The existing `root_sheet.py` rebuilds pins but does NOT touch `sheetInstances`. A new `add_sheet` operation must add both the `HierarchicalSheet` object AND a `HierarchicalSheetInstance` with the correct path and page number.
+Each Pydantic `model_json_schema()` call produces a complete JSON Schema with `properties`, `required`, field constraints (`min_length`, `max_length`, `gt`, `le`), `$defs` for nested types (PositionSpec, PropertySpec, PinSpec, FootprintPadSpec), and `description` strings from docstrings. This is thorough but verbose.
 
 **Consequences:**
-- KiCad crashes or shows "Error loading schematic" when opening the project
-- Page numbering becomes inconsistent
-- ERC may skip checking sub-sheets
+- LLM context window has 17K tokens consumed by tool definitions before the conversation starts
+- For models with 128K context, this is 13% overhead before any work begins
+- For smaller models (32K context), this is 53% overhead -- leaving barely enough room for conversation
+- Slower inference because the model processes all 57 tool definitions for every request
+- Client-side performance degradation loading and parsing 68KB of JSON on initialization
 
 **Prevention:**
-1. `add_sheet` handler must append to BOTH `schematic.sheets` AND `schematic.sheetInstances`
-2. `remove_sheet` (if implemented) must remove from both lists
-3. Page numbers must be unique -- auto-assign the next available page number
-4. Test: add a sheet, serialize, open in KiCad, verify page numbering is correct
+1. **Strip verbose descriptions from schemas before registration**: Remove `$defs` descriptions and long field descriptions. Keep only field names, types, and constraints.
+2. **Compress shared type definitions**: PositionSpec, PropertySpec, and PinSpec are repeated in every operation that uses them. Define them once in a shared `$defs` block instead of inlining per-tool.
+3. **Consider tool grouping**: Register high-level tool groups (e.g., `schematic_operation`, `pcb_operation`) with an `op_type` discriminator, instead of 57 individual tools. This reduces the tool count from 57 to 4-8 but requires the client to discover operations within each group.
+4. **Lazy tool registration**: Use MCP's `notifications/tools/list_changed` to register tools on-demand. Start with 0 tools, register only tools the client actually uses.
+5. **Measure actual impact**: Test with target MCP clients (Claude Code, Cursor) and measure context window consumption. Do not optimize prematurely if clients handle 68KB without issue.
 
 **Detection:**
-Parse the serialized file back and verify sheet count matches sheet_instances count.
+Log the total JSON size of `list_tools` responses. If it exceeds 100KB, the overhead is likely impacting client performance.
+
+**Phase to address:** First implementation phase for basic schema registration. Optimization (compression, grouping) in a follow-up phase if measurements show impact.
 
 ---
 
-### Pitfall 4: Remove Wire/Label/Junction Must Clean Up Adjacent Wire Segments
+### Pitfall 4: Path Security Has Two Layers That Must Both Be Enforced
 
 **What goes wrong:**
-Removing a wire segment that is part of a multi-segment path (L-shaped, zigzag) without checking if other wire segments terminate at the same point leaves dangling wire endpoints. A wire ending at coordinates that have no pin, no junction, and no other wire is an ERC error. Similarly, removing a label without checking if it was the only thing connecting two wire segments breaks the net.
+The MCP server receives file paths from two sources: (1) the `base_dir` configuration (where the server looks for files), and (2) the `target_file` field in each operation's JSON arguments. The existing `TargetFile` validator in `schema.py` (line 143-159) rejects absolute paths, `..` traversal, null bytes, and non-KiCad extensions. The `OperationExecutor` (line 624-627) additionally checks that the resolved path stays within `base_dir`.
+
+But the MCP server introduces a NEW attack surface: the `base_dir` itself. If `base_dir` is configured via environment variable (`KICAD_PROJECT_DIR`) or CLI argument, a compromised or confused LLM could potentially influence the server to use a different `base_dir`, gaining access to files outside the intended project. Additionally, the MCP server's working directory at launch time becomes the default `base_dir` -- if the server is started from `/` or the user's home directory, the executor gains access to all KiCad files on the system.
 
 **Why it happens:**
-The existing `add_wire` operation (schematic_ir.py line 392-427) only appends to `graphicalItems` with no connectivity tracking. There is no adjacency index. A `remove_wire` operation that simply filters the wire out of `graphicalItems` (like `remove_component` filters from `schematicSymbols`) will not check for orphaned neighbors.
+The existing `OperationExecutor` trusts its `base_dir` -- it only validates that `target_file` resolves within it. The MCP server sets `base_dir = Path.cwd()` by default, which depends on where the server process is launched. Claude Code launches MCP servers from its own working directory, which may or may not be the KiCad project directory.
 
 **Consequences:**
-- ERC reports "Pin not connected" or "Wire dangling"
-- Visual artifacts in KiCad (wire stubs going nowhere)
-- Downstream operations that rely on connectivity (like `repair_schematic`) may misbehave
+- If launched from home directory: operations can edit ANY KiCad file in the user's home directory
+- If `KICAD_PROJECT_DIR` is not set and CWD is wrong: operations fail or edit wrong files
+- Path confinement check passes for any file under CWD, which may be too broad
+- Security model assumes `base_dir` is the project root, but MCP server has no way to verify this
 
 **Prevention:**
-1. Before removing a wire segment, check if other wires share an endpoint with it
-2. If removing the wire would leave a dangling endpoint, either refuse the operation (with a clear error message listing the orphaned segments) or offer to cascade-remove the entire connected chain
-3. Removing a local label must check if the label was the sole net name source for its wires. If yes, the wires become unnamed and effectively disconnected
-4. Removing a junction at an intersection must verify that the remaining wires still connect properly
-5. The `repair_schematic` operation already handles orphan cleanup, but it should not be a substitute for correct remove semantics
+1. **Require explicit `base_dir` configuration**: Do NOT default to `Path.cwd()`. Instead, require `KICAD_PROJECT_DIR` environment variable. Fail fast with a clear error if not set.
+2. **Validate `base_dir` on startup**: Check that the configured directory contains at least one `.kicad_pro` file (indicating a valid KiCad project). Reject directories without a project file.
+3. **Log the resolved `base_dir` on startup** so operators can verify the scope
+4. **Keep the existing TargetFile validator** -- it provides defense-in-depth even with correct `base_dir`
+5. **Keep the executor's path confinement check** -- it provides a second layer of defense
+6. **Test the security boundary**: attempt operations with `target_file="../../../etc/passwd"` (must fail at Pydantic validation), `"target_file": "/absolute/path.kicad_sch"` (must fail at TargetFile validator), and a valid path outside the project (must fail at executor confinement)
 
 **Detection:**
-Run ERC after every remove operation. Test: create a T-junction of three wires, remove the stem -- the two cross wires should still connect at the junction point.
+After server startup, log `base_dir` resolved path. If it is `/`, home directory, or any path without a `.kicad_pro` file, the configuration is wrong.
+
+**Phase to address:** First implementation phase -- security boundaries must be established before any tool handlers are written.
 
 ---
 
-### Pitfall 5: Footprint Creation Must Generate Pad Numbers Matching Symbol Pin Numbers for verify_pin_map
+### Pitfall 5: Large KiCad Files Produce Multi-Megabyte JSON Responses
 
 **What goes wrong:**
-`verify_pin_map` (schematic_ir.py line 315-363) compares symbol pin numbers against footprint pad numbers. If the `create_footprint` operation generates pads with numbers like "1", "2", "3" but the corresponding symbol has pin numbers like "A1", "A2", "B1", the pin map verification fails. The operation succeeds but the resulting component cannot be used without footprint assignment errors.
+A typical `.kicad_pcb` file for a real board is 500KB to 10MB of S-expression text. When an operation returns results that include parsed file content (e.g., `query_connectivity` returning all net information, or `validate_schematic` returning all ERC violations with positions), the JSON response can be several megabytes. MCP clients may have response size limits, and the LLM context window cannot meaningfully consume multi-MB responses.
+
+The `OperationExecutor.execute()` returns `dict[str, Any]`, which is serialized to JSON in the MCP handler. For operations that return file content or extensive analysis results, this dict can grow very large.
 
 **Why it happens:**
-The existing `create_symbol` operation (create_file.py line 234-335) uses `PinSpec.number` from the schema. The `create_footprint` operation will use a similar `PadSpec`. But there is no cross-validation between the two. The LLM generating the JSON operation may not know the symbol's pin numbering scheme when creating the footprint.
+The executor returns whatever the handler produces. Handlers are designed for programmatic consumption (other Python code), not LLM consumption. A `validate_schematic` handler might return every violation with full context (surrounding lines, pin positions, net names) because downstream code expects it. The MCP server passes this through without filtering.
 
 **Consequences:**
-- `verify_pin_map` returns `match: false` with `missing_in_footprint` entries
-- KiCad shows "No footprint" or "Pin mismatch" errors
-- User must manually fix pad numbering after creation
+- MCP client receives a response too large to process, truncates or errors
+- LLM context window fills with raw file data, leaving no room for reasoning
+- Response serialization itself takes significant time (JSON encoding 5MB of dicts)
+- Network/transport overhead for large responses over stdio is minimal but still measurable
 
 **Prevention:**
-1. The `create_footprint` operation schema should accept pad numbers as explicit strings (not auto-generated integers)
-2. If a `reference_symbol` parameter is provided, validate that the pad number set covers all pin numbers from the symbol
-3. Test: create a symbol with pins numbered "A1", "A2", create a footprint with pads numbered "1", "2" -- verify_pin_map should fail with clear mismatch message
-4. Test: create a symbol and matching footprint with identical pin/pad numbers -- verify_pin_map should pass
+1. **Cap response size**: Add a maximum response size (e.g., 50KB JSON). If the serialized result exceeds this, truncate with a summary: `"result_truncated": true, "total_items": 1234, "returned_items": 50`
+2. **Summarize, don't dump**: For query operations, return summary statistics instead of full data. E.g., `query_connectivity` should return `{"nets": 42, "connected_pads": 380, "unconnected_pads": 5}` not the full net list
+3. **Paginate large results**: Add `offset` and `limit` parameters to query operations. Return results in pages of 50-100 items.
+4. **Strip verbose fields**: Remove internal fields (UUIDs, raw S-expressions, internal IDs) from MCP responses. The LLM does not need UUIDs to reason about connectivity.
+5. **Test with real files**: Use the Arduino_Mega test fixture (which is a real schematic) to measure response sizes for all 57 operations.
 
 **Detection:**
-After `create_footprint`, run `verify_pin_map` against the target symbol. This should be documented as a required step in the operation's result message.
+Log the serialized JSON size for every tool response. Flag responses over 50KB as warnings, over 500KB as errors.
 
----
-
-### Pitfall 6: Connectivity Query Must Not Mutate State -- The IR Is Shared
-
-**What goes wrong:**
-A connectivity query operation (exposing `analysis/connectivity.py` `NetGraph.from_pcb_ir()`) parses the PCB IR and builds a networkx graph. If the query operation accidentally mutates the IR (e.g., by modifying footprints during traversal, or by caching the NetGraph on the IR object), subsequent operations on the same file will see corrupted state.
-
-**Why it happens:**
-The existing `analysis/connectivity.py` accesses `pcb_ir.footprints` and reads `fp.properties`, `pad.net`. All reads, no writes. But the `from_pcb_ir` classmethod is currently only called from test code. When wired as an operation, it will be called inside the executor's `_execute_pcb` method, which wraps everything in a Transaction. If NetGraph builds any caches or indexes that reference mutable IR objects, those references become stale after the Transaction commits and the IR is discarded.
-
-**Consequences:**
-- Silent data corruption if the NetGraph holds references to IR objects that are later mutated
-- Test failures that are timing-dependent (pass in isolation, fail in batch)
-- Security concern: read-only query should never trigger Transaction commit
-
-**Prevention:**
-1. The connectivity query operation should use the READ-ONLY path in the executor -- it should NOT be registered as a PCB handler (which triggers Transaction wrapping). Instead, register it as a new handler category (e.g., `_QUERY_HANDLERS`) that parses the file, builds the graph, serializes nothing, and returns results
-2. NetGraph must not store references to mutable IR objects -- extract all needed data during construction (it already does this correctly via `_net_index`)
-3. Test: run connectivity query, then immediately run a mutation operation on the same file, verify the mutation succeeds and the query results are unchanged
-4. Verify no file is written after a connectivity query (check file mtime before and after)
-
-**Detection:**
-Check file modification timestamp before and after query operation. If the file was modified, the query is not truly read-only.
-
----
-
-### Pitfall 7: Cross-File Wiring Partial Failure Leaves Files Inconsistent
-
-**What goes wrong:**
-A cross-file wiring operation (e.g., add a hierarchical label in a sub-sheet AND add a matching sheet pin in the parent) involves two files. If the first file's mutation succeeds but the second fails, the project is left in an inconsistent state: the sub-sheet has a label "DATA" but the parent has no corresponding pin.
-
-**Why it happens:**
-The `crossfile/atomic.py` AtomicOperation class handles rollback correctly at the file level -- if the second file's Transaction fails, both files are rolled back. But the current executor (`_execute_schematic`, `_execute_pcb`) processes ONE file per operation. Cross-file operations must use the AtomicOperation coordinator, which exists but is NOT wired to any operation (KNOWN_LIMITATIONS.md M-1).
-
-**Consequences:**
-- One file is modified, the other is not
-- ERC on the modified file passes, but cross-file ERC fails
-- Repairing the inconsistency requires manual editing or knowing which operation partially applied
-
-**Prevention:**
-1. Cross-file operations MUST use `AtomicOperation` from `crossfile/atomic.py` for multi-file Transaction coordination
-2. Each cross-file operation must define ALL files it will modify upfront (the AtomicOperation constructor validates all paths exist before opening Transactions)
-3. The operation handler must be structured as: parse all files -> validate all mutations -> apply all mutations -> commit all Transactions
-4. If any validation fails, NO Transaction is opened -- fail fast before side effects
-5. Test: simulate a failure on the second file (e.g., invalid mutation parameter) and verify BOTH files are unchanged
-
-**Detection:**
-After any cross-file operation (success or failure), verify all involved files have consistent state. For wiring operations: run ERC on both files and verify no new errors were introduced.
+**Phase to address:** First implementation phase for basic size capping. Pagination and summarization can come in follow-up phases.
 
 ---
 
@@ -187,151 +166,92 @@ After any cross-file operation (success or failure), verify all involved files h
 
 ---
 
-### Pitfall 8: kiutils Drops UUIDs from Footprint Files -- create_footprint Must Use Raw S-expression for Serialization
+### Pitfall 6: MCP Clients May Have Tool Count Limits
 
 **What goes wrong:**
-kiutils 1.4.8 drops all UUID tokens from footprint files during parse/serialize. The existing `FootprintIR.__post_init__` enforces `_uuid_map is not None` to prevent this. But `create_footprint` is a CREATE operation -- it uses the `_CREATE_HANDLERS` registry which bypasses IR construction entirely. If the handler uses `kiutils.Footprint.to_file()` directly (like `create_symbol` does with `SymbolLib.to_file()`), the resulting .kicad_mod file will be missing all UUIDs, which makes it incompatible with board files that reference footprints by UUID.
+Registering 57 tools means the MCP client receives a `tools/list` response with 57 entries. While the MCP specification does not define a maximum tool count, individual clients may have practical limits. Claude Desktop and Claude Code have been observed to handle 50+ tools without issue, but other clients (Cursor, Windsurf, custom integrations) may truncate the tool list, show only the first N tools in their UI, or fail to process the full list.
 
 **Why it happens:**
-The `create_symbol` operation (create_file.py line 327-328) calls `lib.to_file()` directly and it works because symbol libraries use `tstamp` (not `uuid`). But footprints use `uuid` tokens extensively (pads, graphics, zones). The PCB IR already has the `_raw_written` escape hatch (executor.py line 729) for cases where kiutils serialization loses data.
+MCP is a young protocol. Client implementations vary in maturity. Some clients may load all tools into a dropdown or sidebar that has rendering limits. Others may have hardcoded limits on how many tool definitions they pass to the LLM's system prompt.
 
 **Consequences:**
-- Created footprints work in isolation but fail when imported into a board
-- DRC reports "Missing UUID" warnings
-- Round-trip tests fail because the serialized file is missing tokens
+- Some operations invisible to the LLM (client dropped them from the tool list)
+- Confusing behavior where some operations work and others silently fail
+- No error message from the client -- it just truncates
 
 **Prevention:**
-1. `create_footprint` should construct the footprint using kiutils, then use the raw S-expression serializer (`serializer/footprint_ser.py`) to preserve UUIDs
-2. Alternatively, generate the S-expression string directly (like some PCB IR methods do) bypassing kiutils serialization entirely
-3. Test: create a footprint, parse it back with `parse_footprint`, verify all UUIDs are present in the raw content
-4. This is the same pattern as FootprintIR -- learn from its UUID map requirement
+1. **Test with target clients early**: Register all 57 tools, verify the client sees all of them via its UI or API
+2. **Group tools by domain if needed**: If a client has a limit, register domain-level tools (e.g., `schematic_edit`, `pcb_edit`) with an `op_type` parameter. This reduces 57 tools to 6-8 grouped tools.
+3. **Use MCP tool annotations to help clients prioritize**: Set `readOnlyHint=True` on query/validation operations so clients can deprioritize them in UI
+4. **Support `notifications/tools/list_changed`**: If the client signals support, register tools on-demand rather than all at startup
 
 **Detection:**
-Parse the created .kicad_mod file and count `(uuid` tokens. If fewer than expected (one per pad + one per graphic item), the serialization lost UUIDs.
+After registering all 57 tools, query `tools/list` from the client side and count the response. If fewer than 57, the client truncated.
+
+**Phase to address:** First implementation phase for registration. Grouping as a fallback in a follow-up phase if clients have limits.
 
 ---
 
-### Pitfall 9: Sheet UUID Must Be Unique Across the Entire Project
+### Pitfall 7: Concurrent Edits From Multiple MCP Clients Corrupt Files
 
 **What goes wrong:**
-Each `HierarchicalSheet` object has a `uuid` field. If two sheets in the same project share a UUID (e.g., because `uuid.uuid4()` was called but a race condition produced a collision, or more likely because the developer copied a sheet object without regenerating its UUID), KiCad will show "Duplicate UUID" errors and may silently drop one of the sheets.
+MCP servers using stdio transport are typically one-server-per-client. But if the same project is opened by two MCP clients (e.g., Claude Code in one terminal and Cursor in another, both configured to use kicad-agent), two MCP server processes run concurrently against the same KiCad files. The `OperationExecutor` has no inter-process locking -- it uses `Transaction` objects that snapshot files for in-process rollback, but they do not prevent concurrent writes from another process.
+
+Client A reads `motor-driver.kicad_sch`, applies mutation, writes back. Client B had already read the same file, applies its own mutation, writes back -- overwriting Client A's changes. The file is now corrupted: Client A's mutation is lost, Client B's mutation is applied to a stale base.
 
 **Why it happens:**
-The existing `add_component` and `create_schematic` operations generate UUIDs correctly using `str(uuid.uuid4())`. But `add_sheet` creates multiple objects that all need UUIDs: the sheet itself, each sheet pin, and the sheet_instance. If any of these reuse a UUID from another object in the same file, KiCad rejects the file.
+The `Transaction` class in `ir/transaction.py` uses `fcntl.flock` for file locking, but `flock` on many systems (macOS, Linux NFS) is advisory, not mandatory. Two processes that both use `flock` will respect each other's locks, but if one process does not use `flock` (or uses it incorrectly), the lock provides no protection. Additionally, the lock is held only during the write phase, not during the read-parse-mutate phase -- a classic TOCTOU race.
 
 **Consequences:**
-- KiCad refuses to load the schematic
-- UUID collision detection is not part of the current validation pipeline
-- Extremely hard to debug -- the error message just says "duplicate UUID" without specifying which objects
+- Silent data loss: one client's edits are overwritten by another
+- File corruption if both writes interleave at the OS level (partial writes)
+- Extremely difficult to reproduce and debug -- depends on exact timing
+- KiCad GUI also accesses these files, adding a third concurrent actor
 
 **Prevention:**
-1. Generate a fresh UUID for every object: sheet, each pin, each instance
-2. After construction, verify all UUIDs in the file are unique (a simple set-length check)
-3. The `uuid_extractor.py` module already extracts UUIDs from raw content -- use it to validate uniqueness after creation
-4. Test: add two sheets in sequence, verify their UUIDs are different
+1. **Use a PID lock file**: On startup, write a `.kicad-agent.lock` file in the project directory containing the server's PID. If the file exists and the PID is alive, refuse to start a second server.
+2. **Advisory: log a warning**: If the server detects another kicad-agent MCP server process for the same project, log a warning. The user may have a legitimate reason for multiple servers (unlikely but possible).
+3. **Document the single-server constraint**: In README and configuration docs, state that only one MCP server should be active per KiCad project at a time.
+4. **Do NOT implement distributed locking**: It adds complexity (lock expiration, deadlock detection) that is not justified for a local CLI tool. PID lock file is sufficient.
+5. **Test the lock**: Start two MCP servers for the same project, verify the second one refuses or warns.
 
 **Detection:**
-After any sheet-adding operation, extract all UUIDs from the serialized file and verify no duplicates.
+Check for `.kicad-agent.lock` file in project directory. If it exists and the PID is alive, another server is running.
+
+**Phase to address:** Second implementation phase (after basic server works). Not blocking for initial development.
 
 ---
 
-### Pitfall 10: Remove Operations Need UUID Cleanup in symbolInstances/sheetInstances
+### Pitfall 8: Dynamic Schema Generation Can Produce Invalid inputSchema at Runtime
 
 **What goes wrong:**
-Removing a wire, label, or junction leaves its UUID behind in instance tables if those tables track graphical items. While KiCad 10+ does not track wire/label/junction UUIDs in instance tables (only component UUIDs are tracked in `symbolInstances`), the remove operation must still ensure the UUID does not appear in any cross-reference structure.
+The plan is to generate 57 MCP tool definitions dynamically from Pydantic `model_json_schema()` output. But Pydantic JSON Schema output is not always a strict subset of what MCP's `inputSchema` field accepts. Specifically:
+
+- Pydantic generates `$defs` sections with shared type definitions. The MCP `inputSchema` field is documented as accepting "a JSON Schema object", but some MCP clients may not handle `$defs`/`$ref` correctly.
+- Pydantic includes `"title"` and `"default"` fields that are valid JSON Schema but may confuse some MCP clients.
+- Literal type fields (like `op_type: Literal["add_component"] = "add_component"`) generate `{"enum": ["add_component"]}` or `{"const": "add_component"}` depending on Pydantic version. The `const` form may not be recognized by all MCP client schema parsers.
+- The `$defs` block for PositionSpec references (`{"$ref": "#/$defs/PositionSpec"}`) may not resolve correctly if the MCP client does not handle JSON Schema references.
 
 **Why it happens:**
-The `remove_component` handler (remove_component.py line 63-69) correctly cleans `symbolInstances`. But `remove_wire` operates on `graphicalItems` which is not tracked in instance tables. The pitfall is assuming this cleanup is unnecessary and then discovering that a future KiCad version or a third-party tool does track these UUIDs.
+JSON Schema is a large specification with many features. MCP clients may implement only a subset. Pydantic generates full JSON Schema output including features that edge-case clients might not support.
 
 **Consequences:**
-- No immediate breakage in KiCad 10, but forward-compatibility risk
-- If the codebase later adds net tracking that uses wire UUIDs, old remove operations will leave phantom references
+- Tool registration succeeds (MCP server accepts any `inputSchema` dict) but the client cannot parse the schema
+- Client shows garbled or missing parameter fields for some tools
+- Client-side validation rejects valid operation arguments because it misinterprets the schema
+- Failures are client-specific and hard to reproduce
 
 **Prevention:**
-1. For `remove_wire`: filter from `graphicalItems` using identity check (like remove_component does for schematicSymbols)
-2. For `remove_label`: remove from the correct list (`labels`, `globalLabels`, or `hierarchicalLabels`) -- the label type determines which list
-3. For `remove_junction`: remove from `junctions` list
-4. Verify the removed UUID does not appear anywhere else in the file content (belt-and-suspenders check)
-5. Each remove operation must record the mutation for audit trail
+1. **Test schema generation early**: Run `model_json_schema()` on all 57 op classes, register them as MCP tools, verify the client shows them correctly.
+2. **Flatten `$refs` if needed**: If a client cannot handle `$defs`/`$ref`, inline the referenced definitions directly into each property. This increases schema size but removes the reference resolution requirement.
+3. **Strip `const` fields**: Replace `"const": "add_component"` with `"enum": ["add_component"]` for broader compatibility.
+4. **Remove unnecessary fields**: Strip `title`, `$id`, `default` from the schema before registering. Keep only `type`, `properties`, `required`, `description`, and constraint keywords.
+5. **Schema normalization function**: Write a `_normalize_schema(schema: dict) -> dict` function that strips or transforms incompatible features before passing to `types.Tool(inputSchema=...)`.
 
 **Detection:**
-After remove, search the serialized file for the removed object's UUID string. It should not appear.
+After registering tools, query the client's representation of tool parameters. If any tool shows missing or garbled parameters, the schema has compatibility issues.
 
----
-
-### Pitfall 11: Hierarchical Sheet Pin Position Must Be on Sheet Boundary -- Not Inside or Outside
-
-**What goes wrong:**
-A hierarchical sheet pin must be positioned exactly on the boundary of the sheet rectangle (defined by `sheet.position`, `sheet.width`, `sheet.height`). Pins placed inside the sheet rectangle are invisible. Pins placed outside the rectangle are shown but do not connect to the sheet's internal wiring. KiCad does not validate this during file load -- the error only shows when trying to wire to the pin.
-
-**Why it happens:**
-The `root_sheet.py` module (lines 121-149) correctly places left pins at `sheet_x` and right pins at `sheet_x + sheet_w`. But `add_sheet_pin` receives coordinates from the LLM JSON, which may not account for the sheet's boundary geometry.
-
-**Consequences:**
-- Sheet pin appears misplaced in the GUI
-- Cannot connect wires to the pin
-- ERC may not catch this specific error
-
-**Prevention:**
-1. `add_sheet_pin` must validate that the pin position lies on the sheet boundary:
-   - X matches `sheet.position.X` (left edge) or `sheet.position.X + sheet.width` (right edge), OR
-   - Y matches `sheet.position.Y` (top edge) or `sheet.position.Y + sheet.height` (bottom edge)
-2. Within a small tolerance (e.g., 0.01mm) for floating-point comparison
-3. If the position is not on the boundary, snap to the nearest boundary edge with a warning
-4. Test: place a pin at sheet center -- must fail or snap to nearest edge
-
-**Detection:**
-Visual inspection in KiCad, or automated check of pin coordinates against sheet geometry.
-
----
-
-### Pitfall 12: Connectivity Query for Schematics Requires Wire Tracing -- Not Just Net Names
-
-**What goes wrong:**
-The existing `NetGraph` (analysis/connectivity.py) only works for PCB files -- it reads pad net assignments. A schematic connectivity query must TRACE WIRES to determine which pins are connected. Two pins with the same net label are connected even if no wire physically joins them (KiCad implicit connection via labels). Two pins connected by a wire but with different labels are shorted. The query must handle both cases.
-
-**Why it happens:**
-The developer assumes schematic connectivity can reuse the PCB NetGraph by reading label names instead of pad nets. This works for label-based connections but misses wire-based connections between pins that have no labels. The existing `ops/repair.py:202-208` has a DEAD CODE loop body (`pass`) for wire propagation (Council finding H-08), meaning wire-based connectivity tracing was attempted but never implemented.
-
-**Consequences:**
-- Query reports "SDA is connected to U1 pin 5 and R2 pin 1" when in fact R2 pin 1 is on a different net that happens to pass through the same position
-- Missing connections that are wire-only (no labels)
-- Incorrect connectivity graph leads to incorrect DRC results
-
-**Prevention:**
-1. Schematic connectivity query must implement proper wire tracing: build a graph where nodes are pin positions, label positions, and wire endpoints; edges are wire segments connecting positions
-2. Labels at the same position implicitly connect all wires/pins at that position
-3. This is a non-trivial graph algorithm -- do not underestimate it
-4. Consider using networkx (already a dependency) for the graph
-5. Test: create a schematic with two components connected by wire only (no labels), verify the query reports them as connected
-6. Test: create a schematic with two components connected only by sharing a label name at different positions, verify the query reports them as connected
-
-**Detection:**
-Compare query results against KiCad's netlist export. Discrepancies indicate bugs.
-
----
-
-### Pitfall 13: Cross-File Operation Must Resolve Paths Relative to Project Root, Not CWD
-
-**What goes wrong:**
-When a cross-file operation modifies `power_supply.kicad_sch` and `root.kicad_sch`, it must resolve both file paths relative to the project's `base_dir`. But the executor currently resolves `target_file` relative to `base_dir` for single-file operations (executor.py line 621). Cross-file operations will receive multiple target_file values, and if any is resolved relative to CWD instead of base_dir, the AtomicOperation will open a Transaction on the wrong file.
-
-**Why it happens:**
-The `crossfile/project_context.py` `detect_project_root` function walks upward to find `.kicad_pro`, which gives the project root. But the cross-file operation handler must use this root (or `base_dir`) to resolve ALL file paths, not just the primary target.
-
-**Consequences:**
-- Transaction opened on wrong file path
-- Path confinement check (executor.py line 626) may pass for the correct path but the AtomicOperation opens the wrong file
-- File corruption if the wrong file is modified and committed
-
-**Prevention:**
-1. All file paths in cross-file operations must be relative to `base_dir`
-2. The `TargetFile` validator already rejects absolute paths and `..` traversal
-3. The cross-file handler must resolve each path as `base_dir / target_file` (same pattern as single-file executor)
-4. Test: run a cross-file operation with CWD different from the project root, verify correct files are modified
-
-**Detection:**
-Log the resolved absolute paths at the start of every cross-file operation. Compare against expected paths.
+**Phase to address:** First implementation phase -- schema generation is foundational.
 
 ---
 
@@ -339,122 +259,49 @@ Log the resolved absolute paths at the start of every cross-file operation. Comp
 
 ---
 
-### Pitfall 14: create_footprint Must Be Added to _CREATE_OP_TYPES Set
+### Pitfall 9: MCP Server base_dir Must Match KiCad Project Root, Not CWD
 
 **What goes wrong:**
-The executor checks `_CREATE_OP_TYPES` (executor.py line 632) to decide whether a file must exist before the operation runs. If `create_footprint` is not in this set, the executor will raise `FileNotFoundError` because the target `.kicad_mod` file does not exist yet.
+This is related to Pitfall 4 but concerns the developer experience. If the MCP server uses `Path.cwd()` as `base_dir`, and the server is launched by Claude Code (which sets CWD to the project root), it works. But if the server is launched manually or by another tool, CWD might be the user's home directory or the kicad-agent source directory. Operations will either fail (no KiCad files found) or succeed against the wrong files.
 
 **Why it happens:**
-The developer adds the `@register_create("create_footprint")` decorator and handler but forgets to update the `_CREATE_OP_TYPES` set on line 50.
-
-**Consequences:**
-- Operation fails immediately with FileNotFoundError for new footprint files
-- Works for appending to existing footprint libraries (confusing -- appears to work sometimes)
+MCP stdio servers are launched by the MCP client, and the client sets the working directory. Claude Code sets it to the project root. Other clients may set it differently. Manual testing (`python3 -m kicad_agent.mcp.ops_server`) inherits the shell's CWD.
 
 **Prevention:**
-1. Add `"create_footprint"` to `_CREATE_OP_TYPES` set on executor.py line 50
-2. Test: create a footprint in a new file, verify it succeeds
-3. Add a CI check: grep for `@register_create` decorators and verify all op_types are in `_CREATE_OP_TYPES`
+1. Log the resolved `base_dir` and CWD at startup
+2. Verify `base_dir` contains a `.kicad_pro` file before accepting operations
+3. Support CLI `--project-dir` argument for manual testing
 
 **Detection:**
-If the operation works for existing files but fails for new files, the `_CREATE_OP_TYPES` set is missing the entry.
+First operation fails with "file not found" if base_dir is wrong. The error message should include the resolved base_dir to help diagnose.
+
+**Phase to address:** First implementation phase.
 
 ---
 
-### Pitfall 15: Schema Field Names Must Match prompt.md Exactly
+### Pitfall 10: Tool Description Quality Directly Affects LLM Operation Selection
 
 **What goes wrong:**
-The Phase 24 Council audit (finding H-6) found prompt-to-schema field name mismatches: `grid_size` in prompt vs `grid_mm` in schema, `erc_report_path` documented but not in schema. Adding new operations repeats this mistake if the prompt.md documentation and Pydantic schema are written by different agents or at different times.
+The LLM chooses which tool to call based on the tool's `name` and `description`. If `add_component` has the description "Add a component" and `duplicate_component` has "Duplicate a component", the LLM may confuse them. With 57 tools, many have similar names (add_wire, add_label, add_power, add_junction, add_no_connect are all "add something to a schematic"). Poor descriptions cause the LLM to pick the wrong tool, leading to failed operations and frustrated users.
 
 **Why it happens:**
-The LLM reads prompt.md to generate JSON operations. If prompt.md says `file_name` but the Pydantic model has `filename`, validation fails. The schema is the source of truth but prompt.md is what the LLM reads.
+The Pydantic schema docstrings were written for developer documentation, not LLM tool selection. `AddWireOp.__doc__` might say "Operation to add a wire segment" which is accurate but does not distinguish it from `AddLabelOp.__doc__` "Operation to add a label" in a way that helps the LLM choose correctly.
 
 **Consequences:**
-- LLM generates operations that fail Pydantic validation
-- User frustration -- the documented fields do not work
-- Same pattern that was already identified and "fixed" in Phase 24
+- LLM calls `add_label` when it should call `add_wire`
+- Repeated failed operations as the LLM tries similar-but-wrong tools
+- User has to explicitly specify which operation to use, defeating the purpose of natural language interaction
 
 **Prevention:**
-1. For each new operation, write the Pydantic schema FIRST, then generate prompt.md FROM the schema
-2. Use `model_json_schema()` to auto-generate the field documentation
-3. Add a test: for each operation type, verify the prompt.md examples pass Pydantic validation
-4. This is a KNOWN repeating pattern -- the Council already flagged it once
+1. Write tool descriptions that include: (a) what the operation does, (b) when to use it vs alternatives, (c) the file type it targets
+2. Example: `"Add a wire segment connecting two points in a schematic. Use for point-to-point electrical connections. Targets .kicad_sch files. Use add_label instead to name a net, add_power to place a power symbol, add_junction to mark a wire intersection."`
+3. Include operation category in the description: `[SCHEMATIC] Add a wire...`, `[PCB] Add copper zone...`, `[CREATE] Create a new...`
+4. Test with the target LLM: give it a task and verify it selects the correct tool
 
 **Detection:**
-Run the prompt.md example JSON through `Operation.model_validate()`. If it fails, there is a mismatch.
+Run a set of test prompts through the MCP client and check which tool the LLM selects. If accuracy is below 90%, descriptions need improvement.
 
----
-
-### Pitfall 16: Remove Wire by UUID, Not by Coordinates
-
-**What goes wrong:**
-Removing a wire by matching start/end coordinates fails when two wires share an endpoint (which is common -- T-junctions, bus entries). The coordinate-based match removes the wrong wire or multiple wires.
-
-**Why it happens:**
-The developer follows the pattern of `remove_component` (which matches by unique reference string) but uses coordinates as the identifier for wires. Coordinates are NOT unique identifiers for wires.
-
-**Consequences:**
-- Wrong wire removed
-- Multiple wires removed when only one was intended
-- Connectivity broken at the removed location
-
-**Prevention:**
-1. Remove wire MUST use UUID as the identifier, not coordinates
-2. The schema should have a `wire_uuid` field, not `start_x/start_y/end_x/end_y`
-3. The handler looks up the UUID in `graphicalItems` and removes by identity
-4. For user convenience, provide a `find_wires_at_position` query that returns UUIDs at given coordinates
-5. Test: create two wires sharing an endpoint, remove one by UUID, verify the other remains
-
-**Detection:**
-Count wires before and after removal. If more than one wire was removed, the matching is too broad.
-
----
-
-### Pitfall 17: Hierarchical Sheet Discovery for Connectivity Query Must Follow Nested References
-
-**What goes wrong:**
-A connectivity query on the root schematic must recursively discover all sub-sheets, sub-sub-sheets, etc. to build the complete connectivity graph. If the discovery only goes one level deep, nets that cross through intermediate sub-sheets are missed.
-
-**Why it happens:**
-`root_sheet.py` iterates `sch.sheets` but does not recurse into sub-sheets' sheets. For the rebuild_root_sheet operation this is fine (it only processes immediate children). For a connectivity query, all levels must be traversed.
-
-**Consequences:**
-- Incomplete connectivity graph
-- Nets that cross sub-sheet boundaries are not traced
-- Query reports incorrect connectivity for multi-level hierarchies
-
-**Prevention:**
-1. Implement recursive sheet discovery with a max depth limit (e.g., 20 levels to match the `_MAX_WALK_LEVELS` constant in project_context.py)
-2. Detect circular references (sheet A references sheet B references sheet A) and fail with a clear error
-3. Cache parsed sub-sheets to avoid re-parsing the same file multiple times
-4. Test: create a 3-level hierarchy (root -> child -> grandchild), verify the query discovers all three levels
-
-**Detection:**
-Compare discovered sheet count against the project's actual .kicad_sch file count. If fewer sheets are discovered, the recursion is incomplete.
-
----
-
-### Pitfall 18: Footprint Pad Layers Must Be Valid KiCad Layer Names
-
-**What goes wrong:**
-KiCad pad layer names are specific strings like "F.Cu", "B.Cu", "*.Cu", "F.Mask", "F.Paste". Passing invalid layer names (e.g., "Top", "Bottom", "copper_top") causes KiCad to silently ignore the pad or show "Unknown layer" errors.
-
-**Why it happens:**
-The `create_symbol` operation does not deal with layers (symbols are layer-agnostic). Footprints are fundamentally layer-aware. The LLM may generate layer names from its training data that do not match KiCad's naming convention.
-
-**Consequences:**
-- Created footprint has pads on wrong layers or no layers
-- DRC reports pad errors
-- Footprint appears correct in the library editor but fails when placed on a board
-
-**Prevention:**
-1. Define a `Literal` type for valid KiCad layer names in the schema (like `PinSpec.electrical_type` uses Literal)
-2. At minimum: "F.Cu", "B.Cu", "*.Cu", "F.Mask", "B.Mask", "F.Paste", "B.Paste", "F.SilkS", "B.SilkS", "Edge.Cuts"
-3. Validate layer names in the Pydantic schema
-4. Test: create a footprint with an invalid layer name -- must fail validation
-
-**Detection:**
-Parse the created footprint with kiutils and verify pad layers are recognized.
+**Phase to address:** Second implementation phase (after basic server works). Description quality is iterative.
 
 ---
 
@@ -462,39 +309,44 @@ Parse the created footprint with kiutils and verify pad layers are recognized.
 
 | Phase Topic | Likely Pitfall | Mitigation | Phase to Address |
 |-------------|---------------|------------|-----------------|
-| Hierarchical sheet add | Sheet path resolution relative to parent (Pitfall 2) | Resolve relative to parent file dir, not project root | First phase implementing sheets |
-| Hierarchical sheet add | Sheet instances not updated (Pitfall 3) | Add to both sheets list AND sheetInstances | First phase implementing sheets |
-| Hierarchical sheet pin add | Pin name mismatch with child labels (Pitfall 1) | Validate against child sheet labels | First phase implementing sheets |
-| Hierarchical sheet pin add | Pin position off sheet boundary (Pitfall 11) | Snap to nearest boundary edge | First phase implementing sheets |
-| Remove wire/label/junction | Dangling wire segments after remove (Pitfall 4) | Check adjacency before remove, cascade or refuse | Remove operations phase |
-| Remove wire | Coordinate-based matching removes wrong wire (Pitfall 16) | Use UUID as identifier, not coordinates | Remove operations phase |
-| Remove wire/label/junction | UUID cleanup in instance tables (Pitfall 10) | Verify UUID not in file after remove | Remove operations phase |
-| create_footprint | kiutils drops UUIDs during serialization (Pitfall 8) | Use raw S-expression serializer, not kiutils to_file | Footprint creation phase |
-| create_footprint | Pad numbering mismatches symbol pins (Pitfall 5) | Cross-validate with target symbol pin numbers | Footprint creation phase |
-| create_footprint | Missing from _CREATE_OP_TYPES (Pitfall 14) | Add to set, add CI check | Footprint creation phase |
-| create_footprint | Invalid pad layer names (Pitfall 18) | Use Literal type for layer names | Footprint creation phase |
-| Connectivity query | Query mutates IR state (Pitfall 6) | Use read-only executor path, no Transaction | Connectivity query phase |
-| Connectivity query (schematic) | Wire tracing not implemented (Pitfall 12) | Implement graph-based wire tracing with networkx | Connectivity query phase |
-| Connectivity query | Nested sheet discovery incomplete (Pitfall 17) | Recursive discovery with depth limit and cycle detection | Connectivity query phase |
-| Cross-file wiring | Partial failure leaves files inconsistent (Pitfall 7) | Use AtomicOperation for multi-file transactions | Cross-file wiring phase |
-| Cross-file wiring | Path resolution relative to CWD (Pitfall 13) | Resolve all paths relative to base_dir | Cross-file wiring phase |
-| All new operations | Schema-prompt field name mismatch (Pitfall 15) | Generate prompt from schema, validate examples | Every phase |
+| Async wrapping of sync executor | Blocking event loop (Pitfall 1) | `asyncio.to_thread()` for every `execute()` call | Phase 1: Server skeleton |
+| Error response format | isError never set to True (Pitfall 2) | Return `CallToolResult(isError=True)` for all errors | Phase 1: Server skeleton |
+| Tool registration from Pydantic | Schema compatibility (Pitfall 8) | Test schema generation with target clients early | Phase 1: Tool registration |
+| base_dir configuration | Path security scope (Pitfall 4) | Require explicit KICAD_PROJECT_DIR, validate on startup | Phase 1: Server skeleton |
+| Response size | Multi-MB JSON responses (Pitfall 5) | Cap response size, summarize large results | Phase 1: Response handler |
+| 57-tool registration | Client tool count limits (Pitfall 6) | Test with all target clients, have grouping fallback ready | Phase 1: Tool registration |
+| Schema size overhead | 68KB context window consumption (Pitfall 3) | Strip verbose fields, compress shared defs | Phase 2: Optimization |
+| Tool descriptions | LLM selects wrong tool (Pitfall 10) | Write distinguishing descriptions with usage guidance | Phase 2: Description quality |
+| Concurrent access | Multi-client file corruption (Pitfall 7) | PID lock file, single-server constraint documentation | Phase 2: Hardening |
+| base_dir vs CWD | Wrong project directory (Pitfall 9) | CLI --project-dir arg, .kicad_pro validation | Phase 1: Server skeleton |
 
 ## Recommended Implementation Order
 
-Based on pitfall dependencies:
+Based on pitfall severity and dependency:
 
-1. **Remove operations first** -- standalone, no cross-file complexity, exercises the remove pattern that cross-file wiring will also need
-2. **Footprint creation** -- standalone create operation, tests the _CREATE_OP_TYPES pattern and UUID serialization
-3. **Connectivity query** -- read-only, no mutation risk, but requires wire tracing implementation
-4. **Hierarchical sheet add** -- most complex single-file operation, multiple sub-pitfalls
-5. **Cross-file wiring** -- depends on AtomicOperation (already built), sheet operations (preceding phase), and remove operations (for cleanup)
+1. **Phase 1: Core server with security and error handling** -- Addresses Pitfalls 1, 2, 4, 5, 8, 9
+   - Async wrapping pattern (Pitfall 1)
+   - Error response helper returning `CallToolResult(isError=True)` (Pitfall 2)
+   - base_dir configuration with validation (Pitfalls 4, 9)
+   - Schema generation and normalization (Pitfall 8)
+   - Response size capping (Pitfall 5)
+   - Register all 57 tools, test with target clients (Pitfall 6)
+
+2. **Phase 2: Optimization and hardening** -- Addresses Pitfalls 3, 7, 10
+   - Schema size optimization (Pitfall 3)
+   - Tool description quality (Pitfall 10)
+   - PID lock file for concurrent access prevention (Pitfall 7)
 
 ## Sources
 
-- kiutils 1.4.8 source: HierarchicalSheet, HierarchicalPin, Pad, Footprint classes (verified via inspect)
-- Council of Ricks All-Hands Audit (COUNCIL-REVIEW.md): Findings H-1, H-6, H-8, M-1, M-3, M-4, M-6, M-8
-- KNOWN_LIMITATIONS.md: Gaps H-1, M-1, M-3, M-4, M-6
-- Existing codebase: executor.py dispatch pattern, remove_component.py cleanup pattern, root_sheet.py sheet handling, create_file.py create_symbol pattern, crossfile/atomic.py multi-file transaction, analysis/connectivity.py NetGraph
-- KiCad S-expression format documentation (dev-docs.kicad.org)
-- kiutils GitHub issues for UUID serialization limitations
+- MCP Python SDK 1.12.3: `mcp.types.Tool`, `mcp.types.CallToolResult`, `mcp.types.ToolAnnotations` (verified via `inspect.signature`)
+- MCP specification: Tools concept (modelcontextprotocol.io), error handling (`isError` field)
+- Existing codebase: `src/kicad_agent/mcp/server.py` (284 lines, proven pattern for async wrapping and error handling)
+- Existing codebase: `src/kicad_agent/ops/executor.py` (1090 lines, synchronous OperationExecutor)
+- Existing codebase: `src/kicad_agent/ops/schema.py` (433 lines, 57-operation discriminated union)
+- Live measurement: 57 tool schemas total 67,992 bytes, individual range 456-5,411 bytes, average 1,192 bytes
+
+---
+*MCP server pitfalls research for: kicad-agent milestone mcp-ops-server*
+*Researched: 2026-05-29*
+*Confidence: HIGH*
