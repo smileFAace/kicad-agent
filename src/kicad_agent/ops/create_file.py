@@ -35,6 +35,7 @@ from kiutils.symbol import (
 from kiutils.items.common import ColorRGBA
 
 from kicad_agent.serializer import normalize_kicad_output
+from kicad_agent.ir.pcb_ir import _escape_sexpr_value
 
 
 def _atomic_write(file_path: Path, content: str) -> None:
@@ -332,4 +333,125 @@ def create_symbol(op: Any, file_path: Path) -> dict[str, Any]:
         "symbol_name": op.symbol_name,
         "pin_count": len(pins),
         "property_count": len(properties),
+    }
+
+
+# ---------------------------------------------------------------------------
+# create_footprint
+# ---------------------------------------------------------------------------
+
+
+def create_footprint(op: Any, file_path: Path) -> dict[str, Any]:
+    """Create a new footprint .kicad_mod file from PadSpec definitions.
+
+    Uses raw S-expression construction instead of kiutils Footprint.to_file()
+    because kiutils 1.4.8 drops UUID tokens from .kicad_mod files (FOOT-02).
+
+    Generates:
+    - Module header with footprint name, layer, attributes
+    - Reference text on F.SilkS
+    - Value text on F.Fab
+    - Pad definitions from op.pads with UUID on each pad
+    - Courtyard lines on F.CrtYd (if courtyard_margin > 0) from pad bounding box
+
+    Args:
+        op: CreateFootprintOp model instance.
+        file_path: Resolved absolute path for the new .kicad_mod file.
+
+    Returns:
+        Dict with target_file, footprint_name, pad_count, courtyard_margin.
+
+    Raises:
+        FileExistsError: If file_path already exists.
+    """
+    if file_path.exists():
+        raise FileExistsError(f"Cannot create: file already exists: {file_path}")
+
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    lines: list[str] = []
+    lines.append(f'(module "{_escape_sexpr_value(op.footprint_name)}" (layer "F.Cu")')
+    lines.append("  (tedit 0)")
+    lines.append(f"  (attr {op.attributes})")
+
+    # Reference text
+    ref_uuid = str(uuid.uuid4())
+    lines.append(
+        f'  (fp_text reference "{_escape_sexpr_value(op.reference_prefix)}**" '
+        f'(at 0 -5.08) (layer "F.SilkS")'
+    )
+    lines.append("    (effects (font (size 1 1) (thickness 0.15)))")
+    lines.append(f'    (uuid "{ref_uuid}"))')
+
+    # Value text
+    val_text = op.value or op.footprint_name
+    val_uuid = str(uuid.uuid4())
+    lines.append(
+        f'  (fp_text value "{_escape_sexpr_value(val_text)}" '
+        f'(at 0 5.08) (layer "F.Fab")'
+    )
+    lines.append("    (effects (font (size 1 1) (thickness 0.15)))")
+    lines.append(f'    (uuid "{val_uuid}"))')
+
+    # Pads
+    for pad_spec in op.pads:
+        pad_uuid = str(uuid.uuid4())
+        pos_x = pad_spec.position.x
+        pos_y = pad_spec.position.y
+
+        pad_line = (
+            f'  (pad "{_escape_sexpr_value(pad_spec.number)}" '
+            f"{pad_spec.pad_type} {pad_spec.shape} "
+            f"(at {pos_x} {pos_y}) "
+            f"(size {pad_spec.size_x} {pad_spec.size_y})"
+        )
+
+        # Drill for thru_hole
+        if pad_spec.pad_type == "thru_hole" and pad_spec.drill_diameter is not None:
+            if pad_spec.drill_offset_x is not None and pad_spec.drill_offset_y is not None:
+                pad_line += (
+                    f" (drill {pad_spec.drill_diameter} "
+                    f"(offset {pad_spec.drill_offset_x} {pad_spec.drill_offset_y}))"
+                )
+            else:
+                pad_line += f" (drill {pad_spec.drill_diameter})"
+
+        # Layers
+        layer_strs = " ".join(f'"{l}"' for l in pad_spec.layers)
+        pad_line += f" (layers {layer_strs})"
+
+        lines.append(pad_line)
+        lines.append(f'    (uuid "{pad_uuid}"))')
+
+    # Courtyard generation (FOOT-03)
+    if op.courtyard_margin > 0 and op.pads:
+        min_x = min(p.position.x - p.size_x / 2 for p in op.pads) - op.courtyard_margin
+        max_x = max(p.position.x + p.size_x / 2 for p in op.pads) + op.courtyard_margin
+        min_y = min(p.position.y - p.size_y / 2 for p in op.pads) - op.courtyard_margin
+        max_y = max(p.position.y + p.size_y / 2 for p in op.pads) + op.courtyard_margin
+
+        for start, end in [
+            ((min_x, min_y), (max_x, min_y)),  # top
+            ((max_x, min_y), (max_x, max_y)),  # right
+            ((max_x, max_y), (min_x, max_y)),  # bottom
+            ((min_x, max_y), (min_x, min_y)),  # left
+        ]:
+            cy_uuid = str(uuid.uuid4())
+            lines.append(
+                f"  (fp_line (start {start[0]} {start[1]}) "
+                f'(end {end[0]} {end[1]}) (layer "F.CrtYd") (width 0.05)'
+            )
+            lines.append(f'    (uuid "{cy_uuid}"))')
+
+    lines.append(")")
+
+    content = "\n".join(lines) + "\n"
+    normalized = normalize_kicad_output(content)
+    _atomic_write(file_path, normalized)
+
+    return {
+        "target_file": op.target_file,
+        "footprint_name": op.footprint_name,
+        "pad_count": len(op.pads),
+        "courtyard_margin": op.courtyard_margin,
     }

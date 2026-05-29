@@ -237,6 +237,8 @@ from kicad_agent.ops._schema_create import (  # noqa: E402
     CreateProjectOp,
     CreateSymbolOp,
     EmbedSymbolOp,
+    CreateFootprintOp,
+    FootprintPadSpec,
 )
 from kicad_agent.ops._schema_repair import (  # noqa: E402
     RepairSchematicOp,
@@ -313,7 +315,8 @@ class Operation(BaseModel):
         | RemoveLabelOp
         | RemoveJunctionOp
         | RemoveNoConnectOp
-        | QueryConnectivityOp,
+        | QueryConnectivityOp
+        | CreateFootprintOp,
         Field(discriminator="op_type"),
     ]
 
@@ -394,6 +397,8 @@ __all__ = [
     "CreateProjectOp",
     "CreateSymbolOp",
     "EmbedSymbolOp",
+    "CreateFootprintOp",
+    "FootprintPadSpec",
     # Repair ops
     "RepairSchematicOp",
     "ConvertKicad6To10Op",

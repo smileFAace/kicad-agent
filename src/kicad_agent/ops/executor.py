@@ -50,7 +50,7 @@ _CREATE_HANDLERS: dict[str, Callable] = {}
 _QUERY_HANDLERS: dict[str, Callable] = {}
 
 # Set of op_types that create new files (bypass file-existence check)
-_CREATE_OP_TYPES = {"create_schematic", "create_pcb", "create_project", "create_symbol"}
+_CREATE_OP_TYPES = {"create_schematic", "create_pcb", "create_project", "create_symbol", "create_footprint"}
 
 
 def register_schematic(op_type: str) -> Callable:
@@ -616,6 +616,12 @@ def _handle_create_project(op: Any, file_path: Path) -> dict[str, Any]:
 def _handle_create_symbol(op: Any, file_path: Path) -> dict[str, Any]:
     from kicad_agent.ops.create_file import create_symbol
     return create_symbol(op, file_path)
+
+
+@register_create("create_footprint")
+def _handle_create_footprint(op: Any, file_path: Path) -> dict[str, Any]:
+    from kicad_agent.ops.create_file import create_footprint
+    return create_footprint(op, file_path)
 
 
 # ---------------------------------------------------------------------------

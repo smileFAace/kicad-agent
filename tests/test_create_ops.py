@@ -20,6 +20,8 @@ from kicad_agent.ops.schema import (
     CreateProjectOp,
     CreateSchematicOp,
     CreateSymbolOp,
+    CreateFootprintOp,
+    FootprintPadSpec,
     Operation,
     PinSpec,
 )
@@ -422,3 +424,401 @@ class TestSchemaExport:
         assert "create_pcb" in mapping
         assert "create_project" in mapping
         assert "create_symbol" in mapping
+        assert "create_footprint" in mapping
+
+
+# ======================================================================
+# Footprint schema validation tests
+# ======================================================================
+
+
+class TestCreateFootprintSchema:
+    """Schema validation for create_footprint."""
+
+    def test_valid_with_pads(self) -> None:
+        op = Operation.model_validate({"root": {
+            "op_type": "create_footprint",
+            "target_file": "dip8.kicad_mod",
+            "footprint_name": "MY_DIP-8",
+            "pads": [
+                {
+                    "number": "1",
+                    "pad_type": "thru_hole",
+                    "shape": "rect",
+                    "position": {"x": -3.81, "y": 2.54},
+                    "size_x": 1.6,
+                    "size_y": 1.6,
+                    "drill_diameter": 0.8,
+                    "layers": ["F.Cu", "B.Cu", "*.Mask"],
+                },
+            ],
+        }})
+        assert op.root.footprint_name == "MY_DIP-8"
+        assert len(op.root.pads) == 1
+
+    def test_rejects_invalid_layer_name(self) -> None:
+        with pytest.raises(ValidationError):
+            Operation.model_validate({"root": {
+                "op_type": "create_footprint",
+                "target_file": "test.kicad_mod",
+                "footprint_name": "FP1",
+                "pads": [
+                    {
+                        "number": "1",
+                        "pad_type": "smd",
+                        "shape": "rect",
+                        "position": {"x": 0, "y": 0},
+                        "size_x": 1.0,
+                        "size_y": 1.0,
+                        "layers": ["Top"],  # Invalid layer name
+                    },
+                ],
+            }})
+
+    def test_rejects_thru_hole_without_drill(self) -> None:
+        with pytest.raises(ValidationError, match="drill_diameter is required"):
+            Operation.model_validate({"root": {
+                "op_type": "create_footprint",
+                "target_file": "test.kicad_mod",
+                "footprint_name": "FP1",
+                "pads": [
+                    {
+                        "number": "1",
+                        "pad_type": "thru_hole",
+                        "shape": "circle",
+                        "position": {"x": 0, "y": 0},
+                        "size_x": 1.6,
+                        "size_y": 1.6,
+                        "layers": ["F.Cu", "B.Cu"],
+                    },
+                ],
+            }})
+
+    def test_smd_pad_no_drill(self) -> None:
+        op = Operation.model_validate({"root": {
+            "op_type": "create_footprint",
+            "target_file": "test.kicad_mod",
+            "footprint_name": "FP1",
+            "pads": [
+                {
+                    "number": "1",
+                    "pad_type": "smd",
+                    "shape": "rect",
+                    "position": {"x": 0, "y": 0},
+                    "size_x": 1.0,
+                    "size_y": 0.5,
+                    "layers": ["F.Cu", "*.Mask"],
+                },
+            ],
+        }})
+        assert op.root.pads[0].drill_diameter is None
+
+    def test_rejects_empty_footprint_name(self) -> None:
+        with pytest.raises(ValidationError):
+            Operation.model_validate({"root": {
+                "op_type": "create_footprint",
+                "target_file": "test.kicad_mod",
+                "footprint_name": "",
+            }})
+
+    def test_rejects_unsafe_footprint_name(self) -> None:
+        with pytest.raises(ValidationError, match="unsafe characters"):
+            Operation.model_validate({"root": {
+                "op_type": "create_footprint",
+                "target_file": "test.kicad_mod",
+                "footprint_name": "bad(name)",
+            }})
+
+    def test_rejects_empty_layers(self) -> None:
+        with pytest.raises(ValidationError):
+            Operation.model_validate({"root": {
+                "op_type": "create_footprint",
+                "target_file": "test.kicad_mod",
+                "footprint_name": "FP1",
+                "pads": [
+                    {
+                        "number": "1",
+                        "pad_type": "smd",
+                        "shape": "rect",
+                        "position": {"x": 0, "y": 0},
+                        "size_x": 1.0,
+                        "size_y": 1.0,
+                        "layers": [],
+                    },
+                ],
+            }})
+
+    def test_rejects_size_x_zero(self) -> None:
+        with pytest.raises(ValidationError):
+            Operation.model_validate({"root": {
+                "op_type": "create_footprint",
+                "target_file": "test.kicad_mod",
+                "footprint_name": "FP1",
+                "pads": [
+                    {
+                        "number": "1",
+                        "pad_type": "smd",
+                        "shape": "rect",
+                        "position": {"x": 0, "y": 0},
+                        "size_x": 0,
+                        "size_y": 1.0,
+                        "layers": ["F.Cu"],
+                    },
+                ],
+            }})
+
+    def test_smd_rejects_drill_diameter(self) -> None:
+        with pytest.raises(ValidationError, match="drill_diameter must be None"):
+            Operation.model_validate({"root": {
+                "op_type": "create_footprint",
+                "target_file": "test.kicad_mod",
+                "footprint_name": "FP1",
+                "pads": [
+                    {
+                        "number": "1",
+                        "pad_type": "smd",
+                        "shape": "rect",
+                        "position": {"x": 0, "y": 0},
+                        "size_x": 1.0,
+                        "size_y": 1.0,
+                        "drill_diameter": 0.8,
+                        "layers": ["F.Cu"],
+                    },
+                ],
+            }})
+
+
+class TestFootprintPadSpecValidation:
+    """Pad-level validation tests."""
+
+    def test_thru_hole_with_drill_valid(self) -> None:
+        pad = FootprintPadSpec(
+            number="1",
+            pad_type="thru_hole",
+            shape="circle",
+            position={"x": 0, "y": 0},
+            size_x=1.6,
+            size_y=1.6,
+            drill_diameter=0.8,
+            layers=["F.Cu", "B.Cu", "*.Mask"],
+        )
+        assert pad.drill_diameter == 0.8
+
+    def test_thru_hole_without_drill_invalid(self) -> None:
+        with pytest.raises(ValidationError, match="drill_diameter is required"):
+            FootprintPadSpec(
+                number="1",
+                pad_type="thru_hole",
+                shape="circle",
+                position={"x": 0, "y": 0},
+                size_x=1.6,
+                size_y=1.6,
+                layers=["F.Cu", "B.Cu"],
+            )
+
+    def test_smd_with_drill_invalid(self) -> None:
+        with pytest.raises(ValidationError, match="drill_diameter must be None"):
+            FootprintPadSpec(
+                number="1",
+                pad_type="smd",
+                shape="rect",
+                position={"x": 0, "y": 0},
+                size_x=1.0,
+                size_y=0.5,
+                drill_diameter=0.8,
+                layers=["F.Cu"],
+            )
+
+
+class TestCreateFootprintExecutor:
+    """End-to-end tests for create_footprint via OperationExecutor."""
+
+    def test_uuid_preservation(self, tmp_path: Path) -> None:
+        """Create footprint with 3 pads, count (uuid tokens = 3 pads + ref + val)."""
+        ex = OperationExecutor(base_dir=tmp_path)
+        ex.execute(Operation.model_validate({"root": {
+            "op_type": "create_footprint",
+            "target_file": "dip8.kicad_mod",
+            "footprint_name": "DIP-8",
+            "courtyard_margin": 0,  # Disable courtyard for clean UUID count
+            "pads": [
+                {"number": "1", "pad_type": "thru_hole", "shape": "rect",
+                 "position": {"x": -3.81, "y": 2.54}, "size_x": 1.6, "size_y": 1.6,
+                 "drill_diameter": 0.8, "layers": ["F.Cu", "B.Cu", "*.Mask"]},
+                {"number": "2", "pad_type": "thru_hole", "shape": "circle",
+                 "position": {"x": -3.81, "y": 0}, "size_x": 1.6, "size_y": 1.6,
+                 "drill_diameter": 0.8, "layers": ["F.Cu", "B.Cu", "*.Mask"]},
+                {"number": "3", "pad_type": "thru_hole", "shape": "circle",
+                 "position": {"x": -3.81, "y": -2.54}, "size_x": 1.6, "size_y": 1.6,
+                 "drill_diameter": 0.8, "layers": ["F.Cu", "B.Cu", "*.Mask"]},
+            ],
+        }}))
+        content = (tmp_path / "dip8.kicad_mod").read_text()
+        uuid_count = content.count("(uuid")
+        assert uuid_count == 5  # 3 pads + reference + value
+
+    def test_valid_kicad_structure(self, tmp_path: Path) -> None:
+        ex = OperationExecutor(base_dir=tmp_path)
+        ex.execute(Operation.model_validate({"root": {
+            "op_type": "create_footprint",
+            "target_file": "test.kicad_mod",
+            "footprint_name": "SOT-23",
+            "pads": [
+                {"number": "1", "pad_type": "smd", "shape": "rect",
+                 "position": {"x": 0, "y": 0}, "size_x": 1.0, "size_y": 0.5,
+                 "layers": ["F.Cu", "F.Paste", "F.Mask"]},
+            ],
+        }}))
+        content = (tmp_path / "test.kicad_mod").read_text()
+        assert "(module" in content
+        assert "(attr through_hole)" in content
+        assert "(fp_text reference" in content
+        assert "(fp_text value" in content
+        assert "(pad" in content
+
+    def test_courtyard_generation(self, tmp_path: Path) -> None:
+        ex = OperationExecutor(base_dir=tmp_path)
+        ex.execute(Operation.model_validate({"root": {
+            "op_type": "create_footprint",
+            "target_file": "test.kicad_mod",
+            "footprint_name": "FP1",
+            "courtyard_margin": 0.5,
+            "pads": [
+                {"number": "1", "pad_type": "smd", "shape": "rect",
+                 "position": {"x": 2.0, "y": 1.0}, "size_x": 1.0, "size_y": 1.0,
+                 "layers": ["F.Cu"]},
+            ],
+        }}))
+        content = (tmp_path / "test.kicad_mod").read_text()
+        assert 'F.CrtYd' in content
+        # Verify courtyard lines exist (4 lines forming rectangle)
+        assert content.count("F.CrtYd") == 4
+
+    def test_courtyard_disabled(self, tmp_path: Path) -> None:
+        ex = OperationExecutor(base_dir=tmp_path)
+        ex.execute(Operation.model_validate({"root": {
+            "op_type": "create_footprint",
+            "target_file": "test.kicad_mod",
+            "footprint_name": "FP1",
+            "courtyard_margin": 0,
+            "pads": [
+                {"number": "1", "pad_type": "smd", "shape": "rect",
+                 "position": {"x": 0, "y": 0}, "size_x": 1.0, "size_y": 1.0,
+                 "layers": ["F.Cu"]},
+            ],
+        }}))
+        content = (tmp_path / "test.kicad_mod").read_text()
+        assert "F.CrtYd" not in content
+
+    def test_smd_no_drill_in_output(self, tmp_path: Path) -> None:
+        ex = OperationExecutor(base_dir=tmp_path)
+        ex.execute(Operation.model_validate({"root": {
+            "op_type": "create_footprint",
+            "target_file": "test.kicad_mod",
+            "footprint_name": "SMD_FP",
+            "pads": [
+                {"number": "1", "pad_type": "smd", "shape": "rect",
+                 "position": {"x": 0, "y": 0}, "size_x": 1.0, "size_y": 0.5,
+                 "layers": ["F.Cu", "F.Paste", "F.Mask"]},
+            ],
+        }}))
+        content = (tmp_path / "test.kicad_mod").read_text()
+        assert "(drill" not in content
+
+    def test_thru_hole_drill_in_output(self, tmp_path: Path) -> None:
+        ex = OperationExecutor(base_dir=tmp_path)
+        ex.execute(Operation.model_validate({"root": {
+            "op_type": "create_footprint",
+            "target_file": "test.kicad_mod",
+            "footprint_name": "TH_FP",
+            "pads": [
+                {"number": "1", "pad_type": "thru_hole", "shape": "circle",
+                 "position": {"x": 0, "y": 0}, "size_x": 1.6, "size_y": 1.6,
+                 "drill_diameter": 0.8, "layers": ["F.Cu", "B.Cu", "*.Mask"]},
+            ],
+        }}))
+        content = (tmp_path / "test.kicad_mod").read_text()
+        assert "(drill 0.8)" in content
+
+    def test_raises_if_file_exists(self, tmp_path: Path) -> None:
+        ex = OperationExecutor(base_dir=tmp_path)
+        op = Operation.model_validate({"root": {
+            "op_type": "create_footprint",
+            "target_file": "test.kicad_mod",
+            "footprint_name": "FP1",
+        }})
+        ex.execute(op)
+        with pytest.raises(FileExistsError):
+            ex.execute(op)
+
+    def test_executor_returns_success(self, tmp_path: Path) -> None:
+        ex = OperationExecutor(base_dir=tmp_path)
+        result = ex.execute(Operation.model_validate({"root": {
+            "op_type": "create_footprint",
+            "target_file": "fp.kicad_mod",
+            "footprint_name": "FP1",
+            "pads": [
+                {"number": "1", "pad_type": "smd", "shape": "rect",
+                 "position": {"x": 0, "y": 0}, "size_x": 1.0, "size_y": 1.0,
+                 "layers": ["F.Cu"]},
+            ],
+        }}))
+        assert result["success"] is True
+        assert result["details"]["pad_count"] == 1
+        assert (tmp_path / "fp.kicad_mod").exists()
+
+    def test_round_trip_with_kiutils(self, tmp_path: Path) -> None:
+        ex = OperationExecutor(base_dir=tmp_path)
+        ex.execute(Operation.model_validate({"root": {
+            "op_type": "create_footprint",
+            "target_file": "dip4.kicad_mod",
+            "footprint_name": "DIP-4",
+            "pads": [
+                {"number": "1", "pad_type": "thru_hole", "shape": "rect",
+                 "position": {"x": -2.54, "y": 2.54}, "size_x": 1.6, "size_y": 1.6,
+                 "drill_diameter": 0.8, "layers": ["F.Cu", "B.Cu", "*.Mask"]},
+                {"number": "2", "pad_type": "thru_hole", "shape": "circle",
+                 "position": {"x": 2.54, "y": 2.54}, "size_x": 1.6, "size_y": 1.6,
+                 "drill_diameter": 0.8, "layers": ["F.Cu", "B.Cu", "*.Mask"]},
+            ],
+        }}))
+        from kiutils.footprint import Footprint
+        fp = Footprint.from_file(str(tmp_path / "dip4.kicad_mod"))
+        assert fp.entryName == "DIP-4"
+
+    def test_empty_pads_valid(self, tmp_path: Path) -> None:
+        ex = OperationExecutor(base_dir=tmp_path)
+        result = ex.execute(Operation.model_validate({"root": {
+            "op_type": "create_footprint",
+            "target_file": "empty.kicad_mod",
+            "footprint_name": "EmptyFP",
+        }}))
+        assert result["success"] is True
+        content = (tmp_path / "empty.kicad_mod").read_text()
+        assert "(module" in content
+        assert "(fp_text reference" in content
+        assert "(fp_text value" in content
+
+    def test_drill_offset_in_output(self, tmp_path: Path) -> None:
+        ex = OperationExecutor(base_dir=tmp_path)
+        ex.execute(Operation.model_validate({"root": {
+            "op_type": "create_footprint",
+            "target_file": "offset.kicad_mod",
+            "footprint_name": "OffsetFP",
+            "pads": [
+                {"number": "1", "pad_type": "thru_hole", "shape": "circle",
+                 "position": {"x": 0, "y": 0}, "size_x": 1.6, "size_y": 1.6,
+                 "drill_diameter": 0.8, "drill_offset_x": 0.1, "drill_offset_y": 0.2,
+                 "layers": ["F.Cu", "B.Cu", "*.Mask"]},
+            ],
+        }}))
+        content = (tmp_path / "offset.kicad_mod").read_text()
+        assert "(offset 0.1 0.2)" in content
+
+    def test_create_footprint_in_create_op_types(self) -> None:
+        from kicad_agent.ops.executor import _CREATE_OP_TYPES
+        assert "create_footprint" in _CREATE_OP_TYPES
+
+    def test_create_footprint_handler_registered(self) -> None:
+        from kicad_agent.ops.executor import _CREATE_HANDLERS
+        assert "create_footprint" in _CREATE_HANDLERS
