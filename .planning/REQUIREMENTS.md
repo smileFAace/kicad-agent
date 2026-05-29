@@ -332,11 +332,76 @@ Which phases cover which requirements. Updated during roadmap creation.
 | LLM-10 | Phase 22: Agent Integration | Pending | 22-01 |
 | LLM-11 | Phase 22: Agent Integration | Pending | 22-01 |
 | LLM-12 | Phase 22: Agent Integration | Complete | 22-02 |
+| REMOVE-01 | Phase 25: Remove Operations | Pending |
+| REMOVE-02 | Phase 25: Remove Operations | Pending |
+| REMOVE-03 | Phase 25: Remove Operations | Pending |
+| REMOVE-04 | Phase 25: Remove Operations | Pending |
+| REMOVE-05 | Phase 25: Remove Operations | Pending |
+| QUERY-01 | Phase 26: Connectivity Query | Pending |
+| QUERY-02 | Phase 26: Connectivity Query | Pending |
+| QUERY-03 | Phase 26: Connectivity Query | Pending |
+| QUERY-04 | Phase 26: Connectivity Query | Pending |
+| FOOT-01 | Phase 27: Footprint Creation | Pending |
+| FOOT-02 | Phase 27: Footprint Creation | Pending |
+| FOOT-03 | Phase 27: Footprint Creation | Pending |
+| FOOT-04 | Phase 27: Footprint Creation | Pending |
+| SHEET-01 | Phase 28: Hierarchical Sheet Operations | Pending |
+| SHEET-02 | Phase 28: Hierarchical Sheet Operations | Pending |
+| SHEET-03 | Phase 28: Hierarchical Sheet Operations | Pending |
+| SHEET-04 | Phase 28: Hierarchical Sheet Operations | Pending |
+| SHEET-05 | Phase 28: Hierarchical Sheet Operations | Pending |
+| SHEET-06 | Phase 28: Hierarchical Sheet Operations | Pending |
+| XFILE-05 | Phase 29: Cross-File Atomic Operations | Pending |
+| XFILE-06 | Phase 29: Cross-File Atomic Operations | Pending |
+| XFILE-07 | Phase 29: Cross-File Atomic Operations | Pending |
 
 **Coverage:**
-- Total requirements: 98 (44 v1 + 8 Phase 8 + 7 Phase 9 + 12 Phase 10 + 5 Phase 11 + 4 Phase 12 + 5 Phase 13 + 4 Phase 14 + 5 Phase 16 + 4 Phase 19)
-- Mapped to phases: 98
+- Total requirements: 120 (44 v1 + 8 Phase 8 + 7 Phase 9 + 12 Phase 10 + 5 Phase 11 + 4 Phase 12 + 5 Phase 13 + 4 Phase 14 + 5 Phase 16 + 4 Phase 19 + 22 v2.2)
+- Mapped to phases: 120
 - Unmapped: 0
+
+---
+
+## v2.2 Requirements — complete-ops
+
+Fill five operation gaps identified by Phase 24 Council audit (KNOWN_LIMITATIONS.md: H-1, M-1, M-3, M-4, M-6). Zero new dependencies — all APIs verified in kiutils 1.4.8.
+
+### Remove Operations (Phase 25)
+
+- [ ] **REMOVE-01**: remove_wire operation removes wire segments by UUID with adjacency check — refuses removal if other wires share endpoints (would create dangling ERC errors)
+- [ ] **REMOVE-02**: remove_label operation removes global/local labels by UUID with net membership validation
+- [ ] **REMOVE-03**: remove_junction operation removes junction markers by UUID
+- [ ] **REMOVE-04**: remove_no_connect operation removes no-connect markers by UUID
+- [ ] **REMOVE-05**: All remove operations use list-filter pattern from existing remove_component.py, record mutations in Transaction, and preserve file round-trip fidelity
+
+### Connectivity Query (Phase 26)
+
+- [ ] **QUERY-01**: query_connectivity operation exposes existing NetGraph (analysis/connectivity.py) through the operation executor as a read-only handler
+- [ ] **QUERY-02**: Five query types supported: connected_pads, net_stats, are_connected, shortest_path, connected_components
+- [ ] **QUERY-03**: Read-only semantics enforced — query handler does not register in mutation Transaction, cannot modify IR state
+- [ ] **QUERY-04**: Returns structured JSON results compatible with LLM reasoning chains (coordinate-grounded where applicable)
+
+### Footprint Creation (Phase 27)
+
+- [ ] **FOOT-01**: create_footprint operation generates .kicad_mod files from JSON PadSpec definitions (pad number, shape, position, size, layers, drill)
+- [ ] **FOOT-02**: Footprint serialization preserves UUIDs on pads and graphics — uses raw S-expression construction instead of kiutils Footprint.to_file() (known kiutils 1.4.8 UUID drop bug)
+- [ ] **FOOT-03**: Automatic courtyard generation from pad bounding box with configurable margin
+- [ ] **FOOT-04**: Pad layer validation ensures only valid KiCad layer names via Literal type (F.Cu, B.Cu, F.Paste, etc.)
+
+### Hierarchical Sheet Operations (Phase 28)
+
+- [ ] **SHEET-01**: add_sheet operation creates hierarchical sheet instances with correct fileName (relative to parent directory, not project root), UUID, and position
+- [ ] **SHEET-02**: add_sheet_pin operation creates hierarchical pins with exact-match validation against child sheet labels (case-sensitive, no fuzzy matching)
+- [ ] **SHEET-03**: navigate_hierarchy operation returns sheet tree with UUID paths, pin/label mappings, and file paths
+- [ ] **SHEET-04**: Sheet instances (sheetInstances) updated alongside sheet creation — missing instances cause KiCad crashes
+- [ ] **SHEET-05**: Sub-sheet file creation produces valid .kicad_sch with proper header, UUID, and paper settings
+- [ ] **SHEET-06**: Nested hierarchy support: path resolution works for root → subdir/child → subdir/subsubdir/grandchild
+
+### Cross-File Atomic Operations (Phase 29)
+
+- [ ] **XFILE-05**: propagate_symbol_change operation uses existing AtomicOperation (crossfile/atomic.py) to mutate symbol across all referencing files atomically
+- [ ] **XFILE-06**: New `_CROSSFILE_HANDLERS` dispatch path in executor receives `dict[Path, BaseIR]` instead of single IR, coordinating multiple files
+- [ ] **XFILE-07**: Partial failure guarantee — if any file mutation fails, ALL files roll back via AtomicOperation. Validate ALL mutations before opening ANY Transaction.
 
 ---
 
@@ -352,7 +417,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-05-17*
-*Last updated: 2026-05-24 — Phase 16 Component Placement AI added*
+*Last updated: 2026-05-29 — v2.2 complete-ops requirements added (REMOVE, QUERY, FOOT, SHEET, XFILE)*
 
 ### Bidirectional KiCad-LTspice (Phase 14)
 

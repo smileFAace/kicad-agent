@@ -50,6 +50,17 @@ If the AI can't produce structurally valid KiCad files through the tool layer, n
 - Existing tools: kiutils (Python), sexpdata (Python), kicad-cli for validation, difftastic for diffs
 - The tool lives at ~/apps/kicad-agent/ (Python backend) with a skill definition at ~/.claude/skills/kicad-agent/
 
+## Current Milestone: v2.2 complete-ops
+
+**Goal:** Fill the operations gaps so kicad-agent can handle real-world KiCad projects with hierarchical designs and full CRUD capabilities.
+
+**Target features:**
+- Hierarchical sheet operations (add_sheet, add_sheet_pin, sheet navigation)
+- Remove operations for wires, labels, junctions
+- Footprint creation operation (create_footprint)
+- Connectivity/netlist query operation
+- Cross-file atomic operations wired to executor
+
 ## Constraints
 
 - **Tech Stack**: Python 3.11+, kiutils, sexpdata, networkx for graph analysis — **Why: KiCad-native parsing, not regex hacks
@@ -87,4 +98,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-17 after initialization*
+*Last updated: 2026-05-29 — Milestone v2.2 started*
