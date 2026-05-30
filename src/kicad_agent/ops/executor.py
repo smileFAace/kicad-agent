@@ -29,6 +29,7 @@ from kicad_agent.ops.schema import Operation
 from kicad_agent.parser import parse_pcb, parse_schematic
 from kicad_agent.parser.uuid_extractor import extract_uuids
 from kicad_agent.ops.ir_cache import CacheEntry, IRCache
+from kicad_agent.ops.undo_stack import UndoStack
 from kicad_agent.serializer import normalize_kicad_output, serialize_pcb, serialize_schematic
 
 logger = logging.getLogger(__name__)
@@ -713,9 +714,10 @@ class OperationExecutor:
         base_dir: Base directory for resolving relative target_file paths.
     """
 
-    def __init__(self, base_dir: Path, *, cache: Optional[IRCache] = None) -> None:
+    def __init__(self, base_dir: Path, *, cache: Optional[IRCache] = None, undo_stack: Optional[UndoStack] = None) -> None:
         self._base_dir = base_dir
         self._cache = cache
+        self._undo_stack = undo_stack
 
     def execute(self, op: Operation) -> dict[str, Any]:
         """Execute a validated operation with Transaction wrapping.
@@ -877,6 +879,11 @@ class OperationExecutor:
         """Execute an operation targeting a schematic file."""
         root = op.root
 
+        # Capture pre-mutation content for undo stack
+        pre_content: Optional[str] = None
+        if self._undo_stack is not None:
+            pre_content = file_path.read_text(encoding="utf-8")
+
         cached_entry = self._cache.get(file_path) if self._cache else None
         if cached_entry is not None:
             parse_result = cached_entry.parse_result
@@ -895,6 +902,12 @@ class OperationExecutor:
             file_path.write_text(normalized, encoding="utf-8")
             txn.commit()
 
+            # Capture post-mutation content for undo stack
+            if self._undo_stack is not None and pre_content is not None:
+                post_content = file_path.read_text(encoding="utf-8")
+                post_mtime = file_path.stat().st_mtime_ns
+                self._undo_stack.push(file_path, pre_content, post_content, root.op_type, post_mtime)
+
         # Invalidate old cache entry and store fresh one after write
         if self._cache:
             self._cache.invalidate(file_path)
@@ -910,6 +923,11 @@ class OperationExecutor:
     def _execute_pcb(self, op: Operation, file_path: Path) -> dict[str, Any]:
         """Execute an operation targeting a PCB file."""
         root = op.root
+
+        # Capture pre-mutation content for undo stack
+        pre_content: Optional[str] = None
+        if self._undo_stack is not None:
+            pre_content = file_path.read_text(encoding="utf-8")
 
         cached_entry = self._cache.get(file_path) if self._cache else None
         if cached_entry is not None:
@@ -932,6 +950,12 @@ class OperationExecutor:
                 serialize_pcb(parse_result, file_path, uuid_map=uuid_map)
 
             txn.commit()
+
+            # Capture post-mutation content for undo stack
+            if self._undo_stack is not None and pre_content is not None:
+                post_content = file_path.read_text(encoding="utf-8")
+                post_mtime = file_path.stat().st_mtime_ns
+                self._undo_stack.push(file_path, pre_content, post_content, root.op_type, post_mtime)
 
         # Invalidate old cache entry and store fresh one after write
         if self._cache:
@@ -1013,7 +1037,14 @@ class OperationExecutor:
             Dict with: success, operation, target_file, details.
         """
         root = op.root
+        pre_content: Optional[str] = None
+        if self._undo_stack is not None and file_path.exists():
+            pre_content = file_path.read_text(encoding="utf-8")
         details = self._dispatch_project(root.op_type, root, file_path)
+        if self._undo_stack is not None and pre_content is not None:
+            post_content = file_path.read_text(encoding="utf-8")
+            post_mtime = file_path.stat().st_mtime_ns
+            self._undo_stack.push(file_path, pre_content, post_content, root.op_type, post_mtime)
         return {
             "success": True,
             "operation": root.op_type,
@@ -1080,7 +1111,14 @@ class OperationExecutor:
             else:
                 raise ValueError(f"Cross-file operation unsupported file type: {fp.suffix}")
 
-        # Phase 2: Open AtomicOperation and execute handler
+        # Phase 2: Capture pre-mutation content for undo stack
+        pre_contents: dict[Path, str] = {}
+        if self._undo_stack is not None:
+            for fp in file_paths:
+                if fp.exists():
+                    pre_contents[fp] = fp.read_text(encoding="utf-8")
+
+        # Phase 3: Open AtomicOperation and execute handler
         with AtomicOperation(file_paths) as atomic:
             handler = _CROSSFILE_HANDLERS.get(root.op_type)
             if handler is None:
@@ -1088,7 +1126,7 @@ class OperationExecutor:
 
             details = handler(root, ir_map, self._base_dir)
 
-            # Phase 3: Serialize all dirty IRs
+            # Phase 4: Serialize all dirty IRs
             for fp, ir in ir_map.items():
                 if ir.dirty:
                     if isinstance(ir, PcbIR):
@@ -1102,7 +1140,7 @@ class OperationExecutor:
                         normalized = normalize_kicad_output(content)
                         fp.write_text(normalized, encoding="utf-8")
 
-            # Phase 4: Commit atomic operation
+            # Phase 5: Commit atomic operation
             atomic_result = atomic.commit()
             if not atomic_result.success:
                 return {
@@ -1111,6 +1149,14 @@ class OperationExecutor:
                     "details": details,
                     "error": atomic_result.error,
                 }
+
+        # Push undo entries for all dirty files after successful commit
+        if self._undo_stack is not None:
+            for fp, ir in ir_map.items():
+                if ir.dirty and fp in pre_contents:
+                    post_content = fp.read_text(encoding="utf-8")
+                    post_mtime = fp.stat().st_mtime_ns
+                    self._undo_stack.push(fp, pre_contents[fp], post_content, root.op_type, post_mtime)
 
         return {
             "success": True,
@@ -1261,7 +1307,14 @@ class OperationExecutor:
                 f"failure{'s' if len(validation_errors) != 1 else ''}",
             }
 
-        # Phase 2 — Apply mutations and serialize (once per file)
+        # Phase 2 — Capture pre-mutation content for undo stack
+        pre_contents: dict[Path, str] = {}
+        if self._undo_stack is not None:
+            for file_path in file_order:
+                if file_path.exists():
+                    pre_contents[file_path] = file_path.read_text(encoding="utf-8")
+
+        # Phase 3 — Apply mutations and serialize (once per file)
         all_results: list[dict[str, Any]] = []
 
         for file_path in file_order:
@@ -1301,6 +1354,13 @@ class OperationExecutor:
 
                 txn.commit()
 
+                # Push undo entry for this file (M-05: synthetic batch op_type)
+                if self._undo_stack is not None and file_path in pre_contents:
+                    post_content = file_path.read_text(encoding="utf-8")
+                    post_mtime = file_path.stat().st_mtime_ns
+                    op_type = f"batch[{len(ops_for_file)}]"
+                    self._undo_stack.push(file_path, pre_contents[file_path], post_content, op_type, post_mtime)
+
             # Invalidate old cache entry and store fresh one after write
             if self._cache:
                 self._cache.invalidate(file_path)
@@ -1318,3 +1378,104 @@ class OperationExecutor:
                     )
 
         return {"success": True, "results": all_results}
+
+    # ------------------------------------------------------------------
+    # Undo/redo methods
+    # ------------------------------------------------------------------
+
+    def undo(self, target_file: Optional[str] = None) -> dict[str, Any]:
+        """Undo the most recent mutation for a file.
+
+        Args:
+            target_file: Relative path to the file. If None, undoes the latest
+                mutation across all files.
+
+        Returns:
+            Dict with success, undone_op, target_file on success.
+            Dict with success=False, error on failure.
+        """
+        if self._undo_stack is None:
+            return {"success": False, "error": "Undo stack not enabled"}
+
+        if target_file is not None:
+            file_path = (self._base_dir / target_file).resolve()
+            entry = self._undo_stack.pop_undo(file_path)
+        else:
+            entry = self._undo_stack.pop_latest_undo()
+
+        if entry is None:
+            return {"success": False, "error": "No operations to undo"}
+
+        # H-04: Symlink protection (mirrors Transaction H-02 control)
+        if entry.file_path.is_symlink():
+            return {"success": False, "error": "Security: target file is a symlink"}
+
+        # M-08: Check parent directory exists before writing
+        if not entry.file_path.parent.exists():
+            return {"success": False, "error": "Cannot undo: parent directory no longer exists"}
+
+        # L-05: Warn if file was modified externally since snapshot
+        if entry.post_mtime and entry.file_path.exists():
+            current_mtime = entry.file_path.stat().st_mtime_ns
+            if current_mtime != entry.post_mtime:
+                logger.warning(
+                    "Undo: file modified externally since snapshot: %s",
+                    entry.file_path,
+                )
+
+        # L-04: Use newline="" to preserve exact byte content (LF line endings)
+        entry.file_path.write_text(entry.pre_content, encoding="utf-8", newline="")
+
+        # Invalidate cache for this file
+        if self._cache:
+            self._cache.invalidate(entry.file_path)
+
+        return {
+            "success": True,
+            "undone_op": entry.op_type,
+            "target_file": str(entry.file_path.relative_to(self._base_dir)),
+        }
+
+    def redo(self, target_file: Optional[str] = None) -> dict[str, Any]:
+        """Redo the most recently undone mutation for a file.
+
+        Args:
+            target_file: Relative path to the file. If None, redoes the latest
+                undone mutation across all files.
+
+        Returns:
+            Dict with success, redone_op, target_file on success.
+            Dict with success=False, error on failure.
+        """
+        if self._undo_stack is None:
+            return {"success": False, "error": "Undo stack not enabled"}
+
+        if target_file is not None:
+            file_path = (self._base_dir / target_file).resolve()
+            entry = self._undo_stack.pop_redo(file_path)
+        else:
+            entry = self._undo_stack.pop_latest_redo()
+
+        if entry is None:
+            return {"success": False, "error": "No operations to redo"}
+
+        # H-04: Symlink protection
+        if entry.file_path.is_symlink():
+            return {"success": False, "error": "Security: target file is a symlink"}
+
+        # M-08: Check parent directory exists before writing
+        if not entry.file_path.parent.exists():
+            return {"success": False, "error": "Cannot redo: parent directory no longer exists"}
+
+        # L-04: Use newline="" to preserve exact byte content
+        entry.file_path.write_text(entry.post_content, encoding="utf-8", newline="")
+
+        # Invalidate cache for this file
+        if self._cache:
+            self._cache.invalidate(entry.file_path)
+
+        return {
+            "success": True,
+            "redone_op": entry.op_type,
+            "target_file": str(entry.file_path.relative_to(self._base_dir)),
+        }

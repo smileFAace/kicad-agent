@@ -306,14 +306,16 @@ class TestExecutorUndoIntegration:
         stack = UndoStack()
         executor = self._make_executor(undo_stack=stack)
 
-        op = Operation(
-            op_type="add_component",
-            target_file="Arduino_Mega.kicad_sch",
-            lib_id="Device:R",
-            reference="R99",
-            value="10k",
-            position={"x": 50.0, "y": 50.0},
-        )
+        op = Operation.model_validate({
+            "root": {
+                "op_type": "add_component",
+                "target_file": "Arduino_Mega.kicad_sch",
+                "library_id": "Device:R",
+                "reference": "R99",
+                "value": "10k",
+                "position": {"x": 50.0, "y": 50.0},
+            }
+        })
         result = executor.execute(op)
         assert result["success"]
         assert stack.can_undo(self.sch_path)
@@ -326,14 +328,16 @@ class TestExecutorUndoIntegration:
 
         original_content = self.sch_path.read_text(encoding="utf-8")
 
-        op = Operation(
-            op_type="add_component",
-            target_file="Arduino_Mega.kicad_sch",
-            lib_id="Device:R",
-            reference="R99",
-            value="10k",
-            position={"x": 50.0, "y": 50.0},
-        )
+        op = Operation.model_validate({
+            "root": {
+                "op_type": "add_component",
+                "target_file": "Arduino_Mega.kicad_sch",
+                "library_id": "Device:R",
+                "reference": "R99",
+                "value": "10k",
+                "position": {"x": 50.0, "y": 50.0},
+            }
+        })
         executor.execute(op)
         assert self.sch_path.read_text(encoding="utf-8") != original_content
 
@@ -347,14 +351,16 @@ class TestExecutorUndoIntegration:
         stack = UndoStack()
         executor = self._make_executor(undo_stack=stack)
 
-        op = Operation(
-            op_type="add_component",
-            target_file="Arduino_Mega.kicad_sch",
-            lib_id="Device:R",
-            reference="R99",
-            value="10k",
-            position={"x": 50.0, "y": 50.0},
-        )
+        op = Operation.model_validate({
+            "root": {
+                "op_type": "add_component",
+                "target_file": "Arduino_Mega.kicad_sch",
+                "library_id": "Device:R",
+                "reference": "R99",
+                "value": "10k",
+                "position": {"x": 50.0, "y": 50.0},
+            }
+        })
         executor.execute(op)
         post_mutation_content = self.sch_path.read_text(encoding="utf-8")
 
@@ -372,14 +378,16 @@ class TestExecutorUndoIntegration:
         stack = UndoStack()
         executor = self._make_executor(undo_stack=stack, cache=cache)
 
-        op = Operation(
-            op_type="add_component",
-            target_file="Arduino_Mega.kicad_sch",
-            lib_id="Device:R",
-            reference="R99",
-            value="10k",
-            position={"x": 50.0, "y": 50.0},
-        )
+        op = Operation.model_validate({
+            "root": {
+                "op_type": "add_component",
+                "target_file": "Arduino_Mega.kicad_sch",
+                "library_id": "Device:R",
+                "reference": "R99",
+                "value": "10k",
+                "position": {"x": 50.0, "y": 50.0},
+            }
+        })
         executor.execute(op)
         # Cache should have an entry after execute
         assert cache.get(self.sch_path) is not None
@@ -394,10 +402,12 @@ class TestExecutorUndoIntegration:
         stack = UndoStack()
         executor = self._make_executor(undo_stack=stack)
 
-        op = Operation(
-            op_type="create_schematic",
-            target_file="new_schematic.kicad_sch",
-        )
+        op = Operation.model_validate({
+            "root": {
+                "op_type": "create_schematic",
+                "target_file": "new_schematic.kicad_sch",
+            }
+        })
         executor.execute(op)
 
         new_path = self.fixture_dir / "new_schematic.kicad_sch"
@@ -450,13 +460,15 @@ class TestExecutorUndoIntegration:
             encoding="utf-8",
         )
 
-        op = Operation(
-            op_type="add_lib_entry",
-            target_file="sym-lib-table",
-            lib_name="NewLib",
-            lib_type="Legacy",
-            uri="/new/path",
-        )
+        op = Operation.model_validate({
+            "root": {
+                "op_type": "add_lib_entry",
+                "target_file": "sym-lib-table",
+                "lib_name": "NewLib",
+                "lib_type": "Legacy",
+                "uri": "/new/path",
+            }
+        })
         result = executor.execute(op)
         assert result["success"]
         assert stack.can_undo(lib_table)
@@ -473,14 +485,16 @@ class TestExecutorUndoIntegration:
         sub_sch = subdir / "test.kicad_sch"
         shutil.copy2(self.sch_path, sub_sch)
 
-        op = Operation(
-            op_type="add_component",
-            target_file="subdir/test.kicad_sch",
-            lib_id="Device:R",
-            reference="R99",
-            value="10k",
-            position={"x": 50.0, "y": 50.0},
-        )
+        op = Operation.model_validate({
+            "root": {
+                "op_type": "add_component",
+                "target_file": "subdir/test.kicad_sch",
+                "library_id": "Device:R",
+                "reference": "R99",
+                "value": "10k",
+                "position": {"x": 50.0, "y": 50.0},
+            }
+        })
         executor.execute(op)
         assert stack.can_undo(sub_sch)
 
@@ -497,18 +511,17 @@ class TestExecutorUndoIntegration:
         stack = UndoStack()
         executor = self._make_executor(undo_stack=stack)
 
-        op = Operation(
-            op_type="add_component",
-            target_file="Arduino_Mega.kicad_sch",
-            lib_id="Device:R",
-            reference="R99",
-            value="10k",
-            position={"x": 50.0, "y": 50.0},
-        )
+        op = Operation.model_validate({
+            "root": {
+                "op_type": "add_component",
+                "target_file": "Arduino_Mega.kicad_sch",
+                "library_id": "Device:R",
+                "reference": "R99",
+                "value": "10k",
+                "position": {"x": 50.0, "y": 50.0},
+            }
+        })
         executor.execute(op)
-        original = self.sch_path.read_text(encoding="utf-8")
-        # Mutated content differs
-        assert self.sch_path.read_text(encoding="utf-8") != original or True
 
         result = executor.undo()
         assert result["success"], f"Undo failed: {result}"
