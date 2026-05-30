@@ -655,6 +655,63 @@ Plans:
 Plans:
 - [x] 31-01-PLAN.md -- erc_check and drc_check MCP tools wrapping kicad-cli validation, structured result parsing, ToolAnnotations (readOnlyHint=True), and tests (MCPVAL-01, MCPVAL-02)
 
+### v2.4 Production-Hardening Phase Details
+
+### Phase 32: Executor Performance — COMPLETE
+**Goal**: IR caching and batch execution for single-parse single-write operation throughput
+**Depends on**: Phase 31
+**Requirements**: PERF-01, PERF-02, PERF-03, PERF-04
+**Success Criteria**:
+  1. IRCache with LRU eviction and thread safety
+  2. execute_batch() parses each file once, writes each file once
+  3. Batch rejects entire batch on validation failure with full error report
+  4. 100 property modifications complete in under 10 seconds
+**Plans**: 2 plans (2/2 complete)
+
+Plans:
+- [x] 32-01-PLAN.md -- IRCache module with LRU eviction and thread safety (PERF-01)
+- [x] 32-02-PLAN.md -- execute_batch() with pre-validation and single-write optimization (PERF-02, PERF-03, PERF-04)
+
+### Phase 33: Undo/Redo Stack
+**Goal**: Per-project undo/redo stack storing file content snapshots in bounded deque, exposed as MCP meta-tools
+**Depends on**: Phase 32
+**Requirements**: UNDO-01, UNDO-02, UNDO-03, UNDO-04, UNDO-05
+**Success Criteria**:
+  1. UndoStack class with bounded deque, thread-safe, stores file content snapshots
+  2. undo() restores pre-mutation content, redo() restores post-mutation content
+  3. MCP undo/redo meta-tools with destructiveHint=True
+  4. Per-file isolation across concurrent projects
+  5. Configurable max_size with env var KICAD_UNDO_MAX_SIZE
+**Plans**: 2 plans
+
+Plans:
+- [ ] 33-01-PLAN.md -- UndoStack module, executor snapshot capture, undo/redo methods (UNDO-01, UNDO-02, UNDO-04, UNDO-05)
+- [ ] 33-02-PLAN.md -- MCP undo/redo meta-tools with dispatch and tests (UNDO-03)
+
+### Phase 34: LLM Provider Abstraction
+**Goal**: Abstract LLM calls behind a protocol so different providers can be swapped
+**Depends on**: Phase 33
+**Requirements**: LLM-13, LLM-14, LLM-15, LLM-16, LLM-17
+**Plans**: TBD
+
+### Phase 35: Remaining Ops Gaps
+**Goal**: Close the five remaining operation gaps for complete CRUD coverage
+**Depends on**: Phase 34
+**Requirements**: GEN-01, GEN-03, GEN-04, GEN-05, GEN-06
+**Plans**: TBD
+
+### Phase 36: Multi-Layer Routing
+**Goal**: Multi-layer routing with impedance control and length matching
+**Depends on**: Phase 35
+**Requirements**: ROUTE-05, ROUTE-06, ROUTE-07
+**Plans**: TBD
+
+### Phase 37: Training + Infrastructure
+**Goal**: Training pipeline hardening and MCP server infrastructure
+**Depends on**: Phase 36
+**Requirements**: TRAIN-01, TRAIN-02, TRAIN-03, TRAIN-04, INFRA-01, INFRA-02, INFRA-03
+**Plans**: TBD
+
 ## Progress
 
 **Execution Order:**
@@ -693,3 +750,5 @@ Phases execute in numeric order: 1 -> 2 -> ... -> 29 -> 30 -> 31
 | 29. Cross-File Atomic Ops | 2/2 | Complete | 2026-05-29 |
 | 30. MCP Operations Server | 1/1 | Complete | 2026-05-29 |
 | 31. Validation Integration | 1/1 | Complete | 2026-05-29 |
+| 32. Executor Performance | 2/2 | Complete | 2026-05-30 |
+| 33. Undo/Redo Stack | 0/2 | In Progress | -- |
