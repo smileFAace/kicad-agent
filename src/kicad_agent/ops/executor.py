@@ -488,6 +488,17 @@ def _handle_remove_dangling_wires(op: Any, ir: SchematicIR, file_path: Path) -> 
     )
 
 
+@register_schematic("break_wire_shorts")
+def _handle_break_wire_shorts(op: Any, ir: SchematicIR, file_path: Path) -> dict[str, Any]:
+    from kicad_agent.ops.repair import break_wire_shorts
+    return break_wire_shorts(
+        ir, file_path,
+        net_pairs=op.net_pairs,
+        strategy=op.strategy,
+        dry_run=op.dry_run,
+    )
+
+
 # ---------------------------------------------------------------------------
 # PCB handler implementations
 # ---------------------------------------------------------------------------

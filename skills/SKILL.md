@@ -28,7 +28,7 @@ Read `prompt.md` from the same directory as this file. It contains the full oper
 
 Determine the user's intent:
 
-- **"help"** -- Print available operations from prompt.md. List all 57 operation types with brief descriptions.
+- **"help"** -- Print available operations from prompt.md. List all 63 operation types with brief descriptions.
 - **"status"** -- Report current project context. Look for KiCad files in the working directory and summarize what was found (schematic, PCB, symbol libs, footprint libs).
 - **"context"** -- Render a project summary. Parse any .kicad_pro file found, list schematics, PCBs, and libraries with component counts.
 - **"analyze <path>"** -- Analyze a KiCad PCB/schematic using the fine-tuned spatial reasoning model. Runs best-of-N generation with reward model scoring and returns the highest-quality reasoning chain.

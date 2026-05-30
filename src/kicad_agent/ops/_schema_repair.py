@@ -1,6 +1,6 @@
 """Repair operation schemas -- repair, convert, snap, power flag, rebuild root sheet, swap symbol,
 update symbols from library, fix shorted nets, fix pin type mismatches, place missing units,
-remove dangling wires."""
+remove dangling wires, break wire shorts."""
 
 from typing import Literal, Optional
 
@@ -289,4 +289,39 @@ class RemoveDanglingWiresOp(BaseModel):
     dry_run: bool = Field(
         default=False,
         description="Report removals without modifying the file",
+    )
+
+
+class BreakWireShortsOp(BaseModel):
+    """Break wire segments that short different nets together.
+
+    Detects wire-level shorts where a physical wire segment connects two nets
+    that shouldn't be connected (e.g. ADC_IN_1 shorted to GND via a crossing
+    wire). Uses BFS to find the bridge wire(s) on the path between shorted
+    net labels and removes them.
+
+    Attributes:
+        op_type: Discriminator literal ``"break_wire_shorts"``.
+        target_file: Relative path to the .kicad_sch file.
+        net_pairs: Optional list of specific net pairs to break, e.g.
+            ``[("ADC_IN_1", "GND")]``. If None, breaks all detected shorts.
+        strategy: ``"shortest_path"`` removes the single wire on the shortest
+            path between shorted nets. ``"all_bridges"`` removes all wires
+            connecting the two nets.
+        dry_run: If True, report what would be removed without modifying.
+    """
+
+    op_type: Literal["break_wire_shorts"] = "break_wire_shorts"
+    target_file: TargetFile
+    net_pairs: Optional[list[list[str]]] = Field(
+        default=None,
+        description='Specific net pairs to break, e.g. [["ADC_IN_1", "GND"]]. None = all shorts.',
+    )
+    strategy: Literal["shortest_path", "all_bridges"] = Field(
+        default="shortest_path",
+        description="shortest_path: remove one bridge wire. all_bridges: remove all connecting wires.",
+    )
+    dry_run: bool = Field(
+        default=False,
+        description="Report bridge wires without modifying the file",
     )

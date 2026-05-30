@@ -1173,3 +1173,208 @@ def remove_dangling_wires(
         "removed_count": len(removed),
         "details": removed,
     }
+
+
+def find_bridge_wires(
+    ir: SchematicIR,
+    net_a: str,
+    net_b: str,
+) -> list[dict[str, Any]]:
+    """Find wire segments that bridge (short) two different nets.
+
+    Uses BFS from net_a label positions to net_b label positions through
+    the wire connectivity graph. Returns the wire(s) on the connecting path.
+
+    Args:
+        ir: SchematicIR for the target schematic.
+        net_a: First net name.
+        net_b: Second net name.
+
+    Returns:
+        List of dicts with wire_index, start, end, and the net pair.
+    """
+    label_positions = ir.get_label_positions()
+    wire_endpoints = ir.get_wire_endpoints()
+
+    # Map positions to net names
+    pos_to_nets: dict[tuple[float, float], set[str]] = {}
+    for label in label_positions:
+        key = _round_pos(label["x"], label["y"])
+        pos_to_nets.setdefault(key, set()).add(label["name"])
+
+    # Seed positions: all positions that have net_a or net_b labels
+    seeds_a: set[tuple[float, float]] = set()
+    seeds_b: set[tuple[float, float]] = set()
+    for pos, nets in pos_to_nets.items():
+        if net_a in nets:
+            seeds_a.add(pos)
+        if net_b in nets:
+            seeds_b.add(pos)
+
+    if not seeds_a or not seeds_b:
+        return []
+
+    # Build adjacency: position → list of (neighbor_position, wire_index)
+    adjacency: dict[tuple[float, float], list[tuple[tuple[float, float], int]]] = {}
+    for we in wire_endpoints:
+        wi = we["wire_index"]
+        start_key = _round_pos(we["start_x"], we["start_y"])
+        end_key = _round_pos(we["end_x"], we["end_y"])
+        adjacency.setdefault(start_key, []).append((end_key, wi))
+        adjacency.setdefault(end_key, []).append((start_key, wi))
+
+    # BFS from all net_a seed positions to any net_b seed position
+    # Track which wire index led to each position
+    visited: set[tuple[float, float]] = set()
+    parent: dict[tuple[float, float], tuple[tuple[float, float], int]] = {}
+    queue: list[tuple[float, float]] = list(seeds_a)
+    for s in queue:
+        visited.add(s)
+
+    found_target: tuple[float, float] | None = None
+    head = 0
+    while head < len(queue):
+        current = queue[head]
+        head += 1
+
+        if current in seeds_b:
+            found_target = current
+            break
+
+        for neighbor, wire_idx in adjacency.get(current, []):
+            if neighbor not in visited:
+                visited.add(neighbor)
+                parent[neighbor] = (current, wire_idx)
+                queue.append(neighbor)
+
+    if found_target is None:
+        return []
+
+    # Trace back from target to seed to find bridge wires
+    bridge_wires: list[int] = []
+    pos = found_target
+    while pos in parent:
+        prev_pos, wire_idx = parent[pos]
+        bridge_wires.append(wire_idx)
+        pos = prev_pos
+
+    # Build details for each bridge wire
+    wire_map: dict[int, dict] = {}
+    for we in wire_endpoints:
+        wire_map[we["wire_index"]] = we
+
+    results = []
+    for wi in bridge_wires:
+        we = wire_map.get(wi)
+        if we:
+            results.append({
+                "wire_index": wi,
+                "start": [we["start_x"], we["start_y"]],
+                "end": [we["end_x"], we["end_y"]],
+                "length": round(_distance(
+                    we["start_x"], we["start_y"],
+                    we["end_x"], we["end_y"],
+                ), 4),
+                "nets": sorted([net_a, net_b]),
+            })
+
+    return results
+
+
+def break_wire_shorts(
+    ir: SchematicIR, file_path: Path, *,
+    net_pairs: list[list[str]] | None = None,
+    strategy: str = "shortest_path",
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Break wire segments that short different nets together.
+
+    Detects positions where wires physically connect two nets that shouldn't
+    be connected. Uses BFS to find the bridge wire(s) on the path between
+    shorted net labels and removes them.
+
+    Args:
+        ir: SchematicIR for the target schematic.
+        file_path: Resolved path to the schematic file.
+        net_pairs: Specific net pairs to break, or None for all detected shorts.
+        strategy: "shortest_path" removes one bridge wire per short,
+            "all_bridges" removes all wires connecting the pair.
+        dry_run: If True, report without modifying.
+
+    Returns:
+        Dict with shorts_found, wires_removed, and details.
+    """
+    # Step 1: Detect all shorts
+    shorts_result = detect_shorted_nets(ir)
+    all_shorts = shorts_result["shorts"]
+
+    if not all_shorts:
+        return {"shorts_found": 0, "wires_removed": 0, "details": []}
+
+    # Step 2: Filter to requested net pairs
+    requested_pairs: set[frozenset[str]] | None = None
+    if net_pairs is not None:
+        requested_pairs = {frozenset(pair) for pair in net_pairs}
+
+    target_shorts = []
+    for short in all_shorts:
+        pair_key = frozenset(short["nets"])
+        if requested_pairs is None or pair_key in requested_pairs:
+            target_shorts.append(short)
+
+    if not target_shorts:
+        return {
+            "shorts_found": len(all_shorts),
+            "wires_removed": 0,
+            "details": [],
+        }
+
+    # Step 3: Find bridge wires for each short
+    all_bridge_indices: set[int] = set()
+    details: list[dict[str, Any]] = []
+
+    for short in target_shorts:
+        nets = short["nets"]
+        if len(nets) < 2:
+            continue
+
+        bridges = find_bridge_wires(ir, nets[0], nets[1])
+
+        if strategy == "shortest_path" and bridges:
+            # Only take the first (shortest path) bridge wire
+            bridges = [bridges[0]]
+
+        for bridge in bridges:
+            all_bridge_indices.add(bridge["wire_index"])
+            details.append({
+                "short": sorted(nets),
+                "wire_start": bridge["start"],
+                "wire_end": bridge["end"],
+                "wire_length": bridge["length"],
+                "dry_run": dry_run,
+            })
+
+    # Step 4: Remove bridge wires
+    sch = ir.schematic
+    removed_count = 0
+
+    if all_bridge_indices and not dry_run:
+        # Remove in reverse index order to preserve indices
+        for idx in sorted(all_bridge_indices, reverse=True):
+            if idx < len(sch.graphicalItems):
+                wire = sch.graphicalItems[idx]
+                sch.graphicalItems.pop(idx)
+                removed_count += 1
+                ir._record_mutation("break_wire_short", {
+                    "wire_index": idx,
+                    "position": [
+                        wire.points[0].X if hasattr(wire, "points") and wire.points else 0,
+                        wire.points[0].Y if hasattr(wire, "points") and wire.points else 0,
+                    ],
+                })
+
+    return {
+        "shorts_found": len(target_shorts),
+        "wires_removed": removed_count if not dry_run else len(all_bridge_indices),
+        "details": details,
+    }

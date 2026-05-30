@@ -6,6 +6,7 @@ Covers:
 - fix_pin_type_mismatches
 - place_missing_units
 - remove_dangling_wires
+- break_wire_shorts
 """
 
 import pytest
@@ -17,6 +18,7 @@ from kicad_agent.ops._schema_repair import (
     FixPinTypeMismatchesOp,
     PlaceMissingUnitsOp,
     RemoveDanglingWiresOp,
+    BreakWireShortsOp,
 )
 from kicad_agent.ir.schematic_ir import SchematicIR
 
@@ -69,6 +71,7 @@ class TestSchemas:
             FixPinTypeMismatchesOp,
             PlaceMissingUnitsOp,
             RemoveDanglingWiresOp,
+            BreakWireShortsOp,
         ]:
             op = Schema(target_file="test.kicad_sch", dry_run=True)
             assert op.dry_run is True
@@ -102,6 +105,27 @@ class TestSchemas:
             max_length_mm=5.0,
         )
         assert op.max_length_mm == 5.0
+
+    def test_break_wire_shorts_defaults(self):
+        op = BreakWireShortsOp(target_file="test.kicad_sch")
+        assert op.op_type == "break_wire_shorts"
+        assert op.net_pairs is None
+        assert op.strategy == "shortest_path"
+        assert op.dry_run is False
+
+    def test_break_wire_shorts_with_pairs(self):
+        op = BreakWireShortsOp(
+            target_file="test.kicad_sch",
+            net_pairs=[["ADC_IN_1", "GND"], ["+3.3V", "VCC_5V"]],
+        )
+        assert op.net_pairs == [["ADC_IN_1", "GND"], ["+3.3V", "VCC_5V"]]
+
+    def test_break_wire_shorts_all_bridges_strategy(self):
+        op = BreakWireShortsOp(
+            target_file="test.kicad_sch",
+            strategy="all_bridges",
+        )
+        assert op.strategy == "all_bridges"
 
 
 # --- Handler integration tests (dry_run) ---
@@ -184,6 +208,37 @@ class TestRemoveDanglingWires:
         assert result["removed_count"] >= 0
 
 
+class TestBreakWireShorts:
+    def test_dry_run_no_crash(self, arduino_ir):
+        from kicad_agent.ops.repair import break_wire_shorts
+        result = break_wire_shorts(
+            arduino_ir, ARDUINO_SCH,
+            dry_run=True,
+        )
+        assert "shorts_found" in result
+        assert "wires_removed" in result
+        assert "details" in result
+        assert isinstance(result["shorts_found"], int)
+        assert isinstance(result["details"], list)
+
+    def test_no_shorts_returns_clean(self, arduino_ir):
+        """With a non-existent pair, should find 0 target shorts."""
+        from kicad_agent.ops.repair import break_wire_shorts
+        result = break_wire_shorts(
+            arduino_ir, ARDUINO_SCH,
+            net_pairs=[["NONEXISTENT_A", "NONEXISTENT_B"]],
+            dry_run=True,
+        )
+        assert result["shorts_found"] == 0
+        assert result["wires_removed"] == 0
+
+    def test_find_bridge_wires_no_match(self, arduino_ir):
+        """find_bridge_wires returns empty for non-existent net pair."""
+        from kicad_agent.ops.repair import find_bridge_wires
+        result = find_bridge_wires(arduino_ir, "FAKE_NET_A", "FAKE_NET_B")
+        assert result == []
+
+
 # --- Executor dispatch tests ---
 
 class TestExecutorDispatch:
@@ -195,6 +250,7 @@ class TestExecutorDispatch:
             "fix_pin_type_mismatches",
             "place_missing_units",
             "remove_dangling_wires",
+            "break_wire_shorts",
         ]
         for op_type in ops:
             assert op_type in _SCHEMATIC_HANDLERS, f"{op_type} not registered"
