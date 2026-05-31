@@ -66,3 +66,17 @@ class RemoveLibEntryOp(BaseModel):
     @classmethod
     def _validate_lib_name(cls, v: str) -> str:
         return _validate_safe_identifier(v, "lib_name")
+
+
+class ListLibEntriesOp(BaseModel):
+    """List all library entries in a sym-lib-table or fp-lib-table.
+
+    Read-only operation -- returns all entries without modifying the file.
+
+    Attributes:
+        op_type: Discriminator literal ``"list_lib_entries"``.
+        target_file: Relative path to sym-lib-table or fp-lib-table.
+    """
+
+    op_type: Literal["list_lib_entries"] = "list_lib_entries"
+    target_file: TargetFile

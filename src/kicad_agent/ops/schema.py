@@ -215,6 +215,7 @@ from kicad_agent.ops._schema_query import (  # noqa: E402
 from kicad_agent.ops._schema_library import (  # noqa: E402
     AddLibEntryOp,
     RemoveLibEntryOp,
+    ListLibEntriesOp,
 )
 from kicad_agent.ops._schema_pcb import (  # noqa: E402
     AddNetClassOp,
@@ -223,6 +224,13 @@ from kicad_agent.ops._schema_pcb import (  # noqa: E402
     SetBoardOutlineOp,
     AssignNetClassOp,
     AutoRouteOp,
+    ModifyNetClassOp,
+    RemoveNetClassOp,
+    ListNetClassesOp,
+    ModifyDesignRuleOp,
+    RemoveDesignRuleOp,
+    ListDesignRulesOp,
+    ModifyProjectSettingsOp,
 )
 from kicad_agent.ops._schema_validation import (  # noqa: E402
     ValidatePowerNetsOp,
@@ -328,7 +336,15 @@ class Operation(BaseModel):
         | NavigateSheetsOp
         | QueryConnectivityOp
         | CreateFootprintOp
-        | PropagateSymbolChangeOp,
+        | PropagateSymbolChangeOp
+        | ListLibEntriesOp
+        | ModifyNetClassOp
+        | RemoveNetClassOp
+        | ListNetClassesOp
+        | ModifyDesignRuleOp
+        | RemoveDesignRuleOp
+        | ListDesignRulesOp
+        | ModifyProjectSettingsOp,
         Field(discriminator="op_type"),
     ]
 
@@ -390,6 +406,7 @@ __all__ = [
     # Library ops
     "AddLibEntryOp",
     "RemoveLibEntryOp",
+    "ListLibEntriesOp",
     # PCB ops
     "AddNetClassOp",
     "AddDesignRuleOp",
@@ -397,6 +414,13 @@ __all__ = [
     "SetBoardOutlineOp",
     "AssignNetClassOp",
     "AutoRouteOp",
+    "ModifyNetClassOp",
+    "RemoveNetClassOp",
+    "ListNetClassesOp",
+    "ModifyDesignRuleOp",
+    "RemoveDesignRuleOp",
+    "ListDesignRulesOp",
+    "ModifyProjectSettingsOp",
     # Validation ops
     "ValidatePowerNetsOp",
     "ValidateSchematicOp",

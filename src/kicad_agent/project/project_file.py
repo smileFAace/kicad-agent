@@ -97,6 +97,66 @@ def parse_project_file(path: Path) -> ProjectFile:
     )
 
 
+def write_project_settings(path: Path, updates: dict[str, Any]) -> None:
+    """Write updated settings to a .kicad_pro project file.
+
+    Reads the raw JSON, deep-merges the updates dict, and writes back
+    atomically to prevent file corruption. Operates on raw JSON to
+    preserve unknown keys that the ProjectFile dataclass does not model.
+
+    Args:
+        path: Path to the .kicad_pro file.
+        updates: Dictionary of sections to merge into the project file.
+            Nested dicts are deep-merged; other values are replaced.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+        ValueError: If the file is not valid JSON.
+    """
+    import os
+    import tempfile
+
+    resolved = path.resolve()
+    if not resolved.exists():
+        raise FileNotFoundError(f"File not found: {path}")
+
+    content = resolved.read_text(encoding="utf-8")
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON in {path}: {e}") from e
+
+    if not isinstance(data, dict):
+        raise ValueError(f"Expected JSON object in {path}, got {type(data).__name__}")
+
+    def _deep_merge(target: dict, source: dict) -> dict:
+        """Deep-merge source into target, returning merged dict."""
+        result = dict(target)
+        for key, value in source.items():
+            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                result[key] = _deep_merge(result[key], value)
+            else:
+                result[key] = value
+        return result
+
+    data = _deep_merge(data, updates)
+
+    # Atomic write (Council FE-02): write to temp file then replace
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".kicad_pro", dir=resolved.parent)
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+            f.write("\n")
+        os.replace(tmp_path, resolved)
+    except BaseException:
+        # Clean up temp file on any failure
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
 def get_project_settings(project_dir: Path) -> dict[str, Any]:
     """Discover project files and return combined settings dict.
 

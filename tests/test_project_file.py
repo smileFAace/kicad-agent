@@ -14,13 +14,22 @@ from kicad_agent.ops.schema import (
     AddDesignRuleOp,
     AddLibEntryOp,
     AddNetClassOp,
+    ListDesignRulesOp,
+    ListLibEntriesOp,
+    ListNetClassesOp,
+    ModifyDesignRuleOp,
+    ModifyNetClassOp,
+    ModifyProjectSettingsOp,
     Operation,
+    RemoveDesignRuleOp,
     RemoveLibEntryOp,
+    RemoveNetClassOp,
 )
 from kicad_agent.project.project_file import (
     ProjectFile,
     get_project_settings,
     parse_project_file,
+    write_project_settings,
 )
 
 # ---------------------------------------------------------------------------
@@ -299,3 +308,454 @@ class TestTargetFileValidation:
                     "uri": "/path",
                 }
             })
+
+
+# ---------------------------------------------------------------------------
+# Phase 35: New operation tests (list, modify, remove for lib tables,
+# net classes, design rules, and modify_project_settings)
+# ---------------------------------------------------------------------------
+
+
+class TestListLibEntries:
+    """Tests for list_lib_entries operation via executor."""
+
+    def test_list_lib_entries_returns_all(self, sym_lib_file: Path) -> None:
+        """list_lib_entries returns all entries from a sym-lib-table."""
+        executor = OperationExecutor(base_dir=sym_lib_file.parent)
+        op = Operation.model_validate({
+            "root": {
+                "op_type": "list_lib_entries",
+                "target_file": "sym-lib-table",
+            }
+        })
+        result = executor.execute(op)
+        assert result["success"] is True
+        entries = result["details"]["entries"]
+        assert result["details"]["count"] == 2
+        assert len(entries) == 2
+        # Verify entry fields
+        device = next(e for e in entries if e["name"] == "Device")
+        assert device["type"] == "KiCad"
+        assert "Device.kicad_sym" in device["uri"]
+
+    def test_list_lib_entries_fp_table(self, fp_lib_file: Path) -> None:
+        """list_lib_entries works on fp-lib-table."""
+        executor = OperationExecutor(base_dir=fp_lib_file.parent)
+        op = Operation.model_validate({
+            "root": {
+                "op_type": "list_lib_entries",
+                "target_file": "fp-lib-table",
+            }
+        })
+        result = executor.execute(op)
+        assert result["success"] is True
+        assert result["details"]["count"] == 1
+        assert result["details"]["entries"][0]["name"] == "tile"
+
+    def test_list_lib_entries_read_only(self, sym_lib_file: Path) -> None:
+        """list_lib_entries does not modify the file."""
+        import os
+        executor = OperationExecutor(base_dir=sym_lib_file.parent)
+        original_mtime = os.path.getmtime(sym_lib_file)
+        op = Operation.model_validate({
+            "root": {
+                "op_type": "list_lib_entries",
+                "target_file": "sym-lib-table",
+            }
+        })
+        # Small delay to ensure mtime would differ if file were written
+        import time
+        time.sleep(0.05)
+        executor.execute(op)
+        assert os.path.getmtime(sym_lib_file) == original_mtime
+
+
+class TestListNetClasses:
+    """Tests for list_net_classes operation via executor."""
+
+    def test_list_net_classes_returns_all(self, dru_file: Path) -> None:
+        """list_net_classes returns all net classes from .kicad_dru."""
+        executor = OperationExecutor(base_dir=dru_file.parent)
+        op = Operation.model_validate({
+            "root": {
+                "op_type": "list_net_classes",
+                "target_file": "board.kicad_dru",
+            }
+        })
+        result = executor.execute(op)
+        assert result["success"] is True
+        classes = result["details"]["net_classes"]
+        assert result["details"]["count"] == 1
+        assert len(classes) == 1
+        assert classes[0]["name"] == "Default"
+        assert classes[0]["clearance"] == 0.2
+        assert classes[0]["track_width"] == 0.25
+
+    def test_list_net_classes_multiple(self, dru_file: Path) -> None:
+        """list_net_classes returns all after adding a second class."""
+        executor = OperationExecutor(base_dir=dru_file.parent)
+        # Add a Power net class first
+        add_op = Operation.model_validate({
+            "root": {
+                "op_type": "add_net_class",
+                "target_file": "board.kicad_dru",
+                "name": "Power",
+                "clearance": 0.3,
+                "track_width": 0.5,
+                "via_diameter": 1.0,
+                "via_drill": 0.6,
+            }
+        })
+        executor.execute(add_op)
+        # Now list
+        list_op = Operation.model_validate({
+            "root": {
+                "op_type": "list_net_classes",
+                "target_file": "board.kicad_dru",
+            }
+        })
+        result = executor.execute(list_op)
+        assert result["success"] is True
+        assert result["details"]["count"] == 2
+        names = [nc["name"] for nc in result["details"]["net_classes"]]
+        assert "Default" in names
+        assert "Power" in names
+
+
+class TestListDesignRules:
+    """Tests for list_design_rules operation via executor."""
+
+    def test_list_design_rules_empty(self, dru_file: Path) -> None:
+        """list_design_rules returns empty when no rules defined."""
+        executor = OperationExecutor(base_dir=dru_file.parent)
+        op = Operation.model_validate({
+            "root": {
+                "op_type": "list_design_rules",
+                "target_file": "board.kicad_dru",
+            }
+        })
+        result = executor.execute(op)
+        assert result["success"] is True
+        assert result["details"]["count"] == 0
+        assert result["details"]["rules"] == []
+
+    def test_list_design_rules_returns_all(self, dru_file: Path) -> None:
+        """list_design_rules returns all rules after adding one."""
+        executor = OperationExecutor(base_dir=dru_file.parent)
+        # Add a rule first
+        add_op = Operation.model_validate({
+            "root": {
+                "op_type": "add_design_rule",
+                "target_file": "board.kicad_dru",
+                "name": "HV_clearance",
+                "constraint_type": "clearance",
+                "constraint_values": {"min": "0.5"},
+                "condition": "A.NetClass == 'HV'",
+            }
+        })
+        executor.execute(add_op)
+        # Now list
+        list_op = Operation.model_validate({
+            "root": {
+                "op_type": "list_design_rules",
+                "target_file": "board.kicad_dru",
+            }
+        })
+        result = executor.execute(list_op)
+        assert result["success"] is True
+        assert result["details"]["count"] == 1
+        rule = result["details"]["rules"][0]
+        assert rule["name"] == "HV_clearance"
+        assert rule["constraint_type"] == "clearance"
+        assert rule["constraint_values"] == {"min": "0.5"}
+
+
+class TestModifyNetClass:
+    """Tests for modify_net_class operation via executor."""
+
+    def test_modify_net_class_updates_clearance(self, dru_file: Path) -> None:
+        """modify_net_class updates clearance on existing class."""
+        executor = OperationExecutor(base_dir=dru_file.parent)
+        op = Operation.model_validate({
+            "root": {
+                "op_type": "modify_net_class",
+                "target_file": "board.kicad_dru",
+                "name": "Default",
+                "clearance": 0.5,
+            }
+        })
+        result = executor.execute(op)
+        assert result["success"] is True
+        assert result["details"]["net_class"] == "Default"
+        assert result["details"]["updated_fields"] == ["clearance"]
+
+        # Verify on disk
+        from kicad_agent.project.design_rules import parse_design_rules
+        dru = parse_design_rules(dru_file)
+        default = next(nc for nc in dru.net_classes if nc.name == "Default")
+        assert default.clearance == 0.5
+        # Other fields unchanged
+        assert default.track_width == 0.25
+
+    def test_modify_net_class_updates_track_width(self, dru_file: Path) -> None:
+        """modify_net_class updates track_width on existing class."""
+        executor = OperationExecutor(base_dir=dru_file.parent)
+        op = Operation.model_validate({
+            "root": {
+                "op_type": "modify_net_class",
+                "target_file": "board.kicad_dru",
+                "name": "Default",
+                "track_width": 0.4,
+            }
+        })
+        result = executor.execute(op)
+        assert result["success"] is True
+
+        # Verify on disk
+        from kicad_agent.project.design_rules import parse_design_rules
+        dru = parse_design_rules(dru_file)
+        default = next(nc for nc in dru.net_classes if nc.name == "Default")
+        assert default.track_width == 0.4
+        # Clearance unchanged
+        assert default.clearance == 0.2
+
+    def test_modify_net_class_nonexistent_raises(self, dru_file: Path) -> None:
+        """modify_net_class raises KeyError for non-existent net class."""
+        executor = OperationExecutor(base_dir=dru_file.parent)
+        op = Operation.model_validate({
+            "root": {
+                "op_type": "modify_net_class",
+                "target_file": "board.kicad_dru",
+                "name": "NonExistent",
+                "clearance": 0.5,
+            }
+        })
+        with pytest.raises(KeyError, match="not found"):
+            executor.execute(op)
+
+
+class TestRemoveNetClass:
+    """Tests for remove_net_class operation via executor."""
+
+    def test_remove_net_class_deletes(self, dru_file: Path) -> None:
+        """remove_net_class deletes a named class from .kicad_dru."""
+        executor = OperationExecutor(base_dir=dru_file.parent)
+        op = Operation.model_validate({
+            "root": {
+                "op_type": "remove_net_class",
+                "target_file": "board.kicad_dru",
+                "name": "Default",
+            }
+        })
+        result = executor.execute(op)
+        assert result["success"] is True
+        assert result["details"]["net_class"] == "Default"
+        assert result["details"]["action"] == "removed"
+
+        # Verify on disk
+        from kicad_agent.project.design_rules import parse_design_rules
+        dru = parse_design_rules(dru_file)
+        assert len(dru.net_classes) == 0
+
+    def test_remove_net_class_nonexistent_raises(self, dru_file: Path) -> None:
+        """remove_net_class raises KeyError for non-existent name."""
+        executor = OperationExecutor(base_dir=dru_file.parent)
+        op = Operation.model_validate({
+            "root": {
+                "op_type": "remove_net_class",
+                "target_file": "board.kicad_dru",
+                "name": "Ghost",
+            }
+        })
+        with pytest.raises(KeyError, match="not found"):
+            executor.execute(op)
+
+
+class TestModifyDesignRule:
+    """Tests for modify_design_rule operation via executor."""
+
+    def test_modify_design_rule_updates_constraint_values(self, dru_file: Path) -> None:
+        """modify_design_rule updates constraint_values on existing rule."""
+        executor = OperationExecutor(base_dir=dru_file.parent)
+        # Add a rule first
+        add_op = Operation.model_validate({
+            "root": {
+                "op_type": "add_design_rule",
+                "target_file": "board.kicad_dru",
+                "name": "HV_clearance",
+                "constraint_type": "clearance",
+                "constraint_values": {"min": "0.5"},
+                "condition": "A.NetClass == 'HV'",
+            }
+        })
+        executor.execute(add_op)
+        # Modify it
+        mod_op = Operation.model_validate({
+            "root": {
+                "op_type": "modify_design_rule",
+                "target_file": "board.kicad_dru",
+                "name": "HV_clearance",
+                "constraint_values": {"min": "1.0"},
+            }
+        })
+        result = executor.execute(mod_op)
+        assert result["success"] is True
+        assert result["details"]["rule_name"] == "HV_clearance"
+
+        # Verify on disk
+        from kicad_agent.project.design_rules import parse_design_rules
+        dru = parse_design_rules(dru_file)
+        rule = next(r for r in dru.custom_rules if r.name == "HV_clearance")
+        assert rule.constraint_values == {"min": "1.0"}
+        # constraint_type unchanged
+        assert rule.constraint_type == "clearance"
+
+    def test_modify_design_rule_nonexistent_raises(self, dru_file: Path) -> None:
+        """modify_design_rule raises KeyError for non-existent rule."""
+        executor = OperationExecutor(base_dir=dru_file.parent)
+        op = Operation.model_validate({
+            "root": {
+                "op_type": "modify_design_rule",
+                "target_file": "board.kicad_dru",
+                "name": "NoSuchRule",
+                "constraint_values": {"min": "1.0"},
+            }
+        })
+        with pytest.raises(KeyError, match="not found"):
+            executor.execute(op)
+
+
+class TestRemoveDesignRule:
+    """Tests for remove_design_rule operation via executor."""
+
+    def test_remove_design_rule_deletes(self, dru_file: Path) -> None:
+        """remove_design_rule deletes a named rule from .kicad_dru."""
+        executor = OperationExecutor(base_dir=dru_file.parent)
+        # Add a rule first
+        add_op = Operation.model_validate({
+            "root": {
+                "op_type": "add_design_rule",
+                "target_file": "board.kicad_dru",
+                "name": "HV_clearance",
+                "constraint_type": "clearance",
+                "constraint_values": {"min": "0.5"},
+                "condition": "A.NetClass == 'HV'",
+            }
+        })
+        executor.execute(add_op)
+        # Remove it
+        rm_op = Operation.model_validate({
+            "root": {
+                "op_type": "remove_design_rule",
+                "target_file": "board.kicad_dru",
+                "name": "HV_clearance",
+            }
+        })
+        result = executor.execute(rm_op)
+        assert result["success"] is True
+        assert result["details"]["rule_name"] == "HV_clearance"
+        assert result["details"]["action"] == "removed"
+
+        # Verify on disk
+        from kicad_agent.project.design_rules import parse_design_rules
+        dru = parse_design_rules(dru_file)
+        assert len(dru.custom_rules) == 0
+
+
+class TestModifyProjectSettings:
+    """Tests for modify_project_settings operation via executor."""
+
+    def test_modify_project_settings_merges(self, pro_file: Path) -> None:
+        """modify_project_settings merges updates into .kicad_pro JSON."""
+        executor = OperationExecutor(base_dir=pro_file.parent)
+        op = Operation.model_validate({
+            "root": {
+                "op_type": "modify_project_settings",
+                "target_file": "board.kicad_pro",
+                "updates": {
+                    "general": {"no_connects": 5},
+                    "pcbnew": {"new_key": "new_value"},
+                },
+            }
+        })
+        result = executor.execute(op)
+        assert result["success"] is True
+        assert result["details"]["updated_sections"] == ["general", "pcbnew"]
+
+        # Verify on disk
+        data = json.loads(pro_file.read_text(encoding="utf-8"))
+        assert data["general"]["no_connects"] == 5
+        assert data["general"]["links"] == 0  # preserved
+        assert data["pcbnew"]["new_key"] == "new_value"
+        assert data["schematic"]["legacy_lib_dir"] == ""  # preserved
+
+    def test_modify_project_settings_preserves_unknown_keys(self, pro_file: Path) -> None:
+        """modify_project_settings does not lose unknown keys."""
+        # Add an unknown key to the file
+        data = json.loads(pro_file.read_text(encoding="utf-8"))
+        data["custom_section"] = {"my_key": "my_value"}
+        pro_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+        executor = OperationExecutor(base_dir=pro_file.parent)
+        op = Operation.model_validate({
+            "root": {
+                "op_type": "modify_project_settings",
+                "target_file": "board.kicad_pro",
+                "updates": {
+                    "general": {"links": 10},
+                },
+            }
+        })
+        executor.execute(op)
+
+        # Verify unknown key preserved
+        updated = json.loads(pro_file.read_text(encoding="utf-8"))
+        assert updated["custom_section"]["my_key"] == "my_value"
+        assert updated["general"]["links"] == 10
+
+
+class TestWriteProjectSettings:
+    """Tests for write_project_settings function directly."""
+
+    def test_write_project_settings_atomic(self, tmp_path: Path) -> None:
+        """write_project_settings uses atomic write (file always valid)."""
+        pro = tmp_path / "test.kicad_pro"
+        pro.write_text(json.dumps({"version": "1", "key": "value"}), encoding="utf-8")
+
+        write_project_settings(pro, {"key": "updated"})
+        data = json.loads(pro.read_text(encoding="utf-8"))
+        assert data["key"] == "updated"
+        assert data["version"] == "1"
+
+    def test_write_project_settings_deep_merge(self, tmp_path: Path) -> None:
+        """write_project_settings deep-merges nested dicts."""
+        pro = tmp_path / "test.kicad_pro"
+        pro.write_text(json.dumps({
+            "section": {"a": 1, "b": 2, "nested": {"x": 10}},
+        }), encoding="utf-8")
+
+        write_project_settings(pro, {"section": {"b": 20, "nested": {"y": 30}}})
+        data = json.loads(pro.read_text(encoding="utf-8"))
+        assert data["section"]["a"] == 1  # preserved
+        assert data["section"]["b"] == 20  # updated
+        assert data["section"]["nested"]["x"] == 10  # deep preserved
+        assert data["section"]["nested"]["y"] == 30  # deep added
+
+
+class TestNewOpTypeValidation:
+    """Test Operation.model_validate accepts each new op_type string."""
+
+    @pytest.mark.parametrize("op_type,extra", [
+        ("list_lib_entries", {"target_file": "sym-lib-table"}),
+        ("modify_net_class", {"target_file": "b.kicad_dru", "name": "Default", "clearance": 0.5}),
+        ("remove_net_class", {"target_file": "b.kicad_dru", "name": "Default"}),
+        ("list_net_classes", {"target_file": "b.kicad_dru"}),
+        ("modify_design_rule", {"target_file": "b.kicad_dru", "name": "Rule1", "constraint_values": {"min": "1.0"}}),
+        ("remove_design_rule", {"target_file": "b.kicad_dru", "name": "Rule1"}),
+        ("list_design_rules", {"target_file": "b.kicad_dru"}),
+        ("modify_project_settings", {"target_file": "b.kicad_pro", "updates": {"general": {}}}),
+    ])
+    def test_op_type_validates(self, op_type: str, extra: dict) -> None:
+        """Each new op_type validates through Operation.model_validate."""
+        op = Operation.model_validate({"root": {"op_type": op_type, **extra}})
+        assert op.root.op_type == op_type

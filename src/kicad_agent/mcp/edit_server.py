@@ -289,7 +289,7 @@ app = Server("kicad-agent-edit", version="0.1.0", lifespan=server_lifespan)
 
 @app.list_tools()
 async def list_tools() -> list[types.Tool]:
-    """Return all available MCP tools (57 operations + 6 meta-tools)."""
+    """Return all available MCP tools (65 operations + 6 meta-tools)."""
     return _ALL_TOOLS
 
 

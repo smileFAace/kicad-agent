@@ -220,6 +220,56 @@ class DesignRulesFile:
                 return self.custom_rules.pop(i)
         raise KeyError(f"Design rule '{name}' not found.")
 
+    def modify_net_class(self, name: str, **updates: float) -> NetClassDef:
+        """Modify an existing net class by name.
+
+        Uses dataclasses.replace to create a new frozen instance with only
+        the specified (non-None) fields updated.
+
+        Args:
+            name: Net class name to modify.
+            **updates: Keyword arguments of dimension fields to update.
+
+        Returns:
+            The new NetClassDef with updated fields.
+
+        Raises:
+            KeyError: If no net class with the given name exists.
+        """
+        import dataclasses as _dc
+        for i, nc in enumerate(self.net_classes):
+            if nc.name == name:
+                filtered = {k: v for k, v in updates.items() if v is not None}
+                new_nc = _dc.replace(nc, **filtered)
+                self.net_classes[i] = new_nc
+                return new_nc
+        raise KeyError(f"Net class '{name}' not found.")
+
+    def modify_rule(self, name: str, **updates) -> DesignRule:
+        """Modify an existing custom DRC rule by name.
+
+        Uses dataclasses.replace to create a new frozen instance with only
+        the specified (non-None) fields updated.
+
+        Args:
+            name: Rule name to modify.
+            **updates: Keyword arguments of rule fields to update.
+
+        Returns:
+            The new DesignRule with updated fields.
+
+        Raises:
+            KeyError: If no rule with the given name exists.
+        """
+        import dataclasses as _dc
+        for i, rule in enumerate(self.custom_rules):
+            if rule.name == name:
+                filtered = {k: v for k, v in updates.items() if v is not None}
+                new_rule = _dc.replace(rule, **filtered)
+                self.custom_rules[i] = new_rule
+                return new_rule
+        raise KeyError(f"Design rule '{name}' not found.")
+
     def to_sexp(self) -> str:
         """Serialize the design rules to S-expression format.
 

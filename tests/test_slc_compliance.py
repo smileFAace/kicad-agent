@@ -267,8 +267,8 @@ class TestOperationCountConsistency:
     def test_schema_op_count(self) -> None:
         """Verify we have the expected number of Op classes after bus removal."""
         count = _count_op_classes()
-        # 49 original minus AddBusOp and RemoveBusOp = 47, plus 4 remove ops + 1 query op + 1 footprint op + 3 sheet ops + 1 cross-file op + 5 ERC auto-fix ops + 1 break_wire_shorts = 63
-        assert count == 63, f"Expected 63 Op classes, found {count}"
+        # 49 original minus AddBusOp and RemoveBusOp = 47, plus 4 remove ops + 1 query op + 1 footprint op + 3 sheet ops + 1 cross-file op + 5 ERC auto-fix ops + 1 break_wire_shorts + 8 project CRUD ops = 71
+        assert count == 71, f"Expected 71 Op classes, found {count}"
 
     def test_readme_operation_count_matches_schema(self) -> None:
         """README.md operation count must match schema.py Op class count."""
