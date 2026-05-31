@@ -97,17 +97,17 @@ class TestAnthropicProvider:
 
         fake_msg = FakeMessage([FakeTextBlock("generated text")])
 
-        with patch("kicad_agent.llm.client.anthropic") as mock_anthropic:
-            mock_client = MagicMock()
-            mock_client.messages.create.return_value = fake_msg
-            mock_anthropic.Anthropic.return_value = mock_client
+        with patch("anthropic.Anthropic") as mock_cls:
+            mock_instance = MagicMock()
+            mock_cls.return_value = mock_instance
+            mock_instance.messages.create.return_value = fake_msg
 
             provider = AnthropicProvider()
             result = provider.generate("hello", system="you are helpful")
 
         assert result == "generated text"
-        mock_client.messages.create.assert_called_once()
-        call_kwargs = mock_client.messages.create.call_args[1]
+        mock_instance.messages.create.assert_called_once()
+        call_kwargs = mock_instance.messages.create.call_args[1]
         assert call_kwargs["messages"] == [
             {"role": "user", "content": "hello"}
         ]
@@ -120,7 +120,7 @@ class TestAnthropicProvider:
         """AnthropicProvider.embed() raises NotImplementedError."""
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
-        with patch("kicad_agent.llm.client.anthropic"):
+        with patch("anthropic.Anthropic"):
             provider = AnthropicProvider()
 
         with pytest.raises(NotImplementedError, match="Anthropic does not offer"):
@@ -134,10 +134,10 @@ class TestAnthropicProvider:
 
         fake_msg = FakeMessage([FakeTextBlock("passthrough")])
 
-        with patch("kicad_agent.llm.client.anthropic") as mock_anthropic:
-            mock_client = MagicMock()
-            mock_client.messages.create.return_value = fake_msg
-            mock_anthropic.Anthropic.return_value = mock_client
+        with patch("anthropic.Anthropic") as mock_cls:
+            mock_instance = MagicMock()
+            mock_cls.return_value = mock_instance
+            mock_instance.messages.create.return_value = fake_msg
 
             provider = AnthropicProvider()
             result = provider.create_message(
@@ -152,7 +152,7 @@ class TestAnthropicProvider:
         """AnthropicProvider.model returns the model string from LLMClient."""
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
-        with patch("kicad_agent.llm.client.anthropic"):
+        with patch("anthropic.Anthropic"):
             provider = AnthropicProvider()
 
         assert provider.model == "claude-sonnet-4-20250514"
@@ -161,7 +161,7 @@ class TestAnthropicProvider:
         """AnthropicProvider accepts model override."""
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
-        with patch("kicad_agent.llm.client.anthropic"):
+        with patch("anthropic.Anthropic"):
             provider = AnthropicProvider(model="claude-haiku-4-20250414")
 
         assert provider.model == "claude-haiku-4-20250414"
@@ -188,7 +188,7 @@ class TestGetProvider:
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
         monkeypatch.delenv("KICAD_LLM_PROVIDER", raising=False)
 
-        with patch("kicad_agent.llm.client.anthropic"):
+        with patch("anthropic.Anthropic"):
             provider = get_provider()
 
         assert isinstance(provider, AnthropicProvider)
@@ -246,7 +246,7 @@ class TestProtocolCompliance:
         """AnthropicProvider satisfies LLMProvider protocol."""
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
-        with patch("kicad_agent.llm.client.anthropic"):
+        with patch("anthropic.Anthropic"):
             provider = AnthropicProvider()
 
         assert isinstance(provider, LLMProvider)
@@ -262,7 +262,7 @@ class TestProtocolCompliance:
         """AnthropicProvider satisfies LLMBackend protocol."""
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
-        with patch("kicad_agent.llm.client.anthropic"):
+        with patch("anthropic.Anthropic"):
             provider = AnthropicProvider()
 
         assert isinstance(provider, LLMBackend)

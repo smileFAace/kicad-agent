@@ -79,6 +79,11 @@ def __getattr__(name: str):
         "TextCritiqueParser": "kicad_agent.llm.text_parsers",
         "UnifiedIntentParser": "kicad_agent.llm.unified_parsers",
         "UnifiedErrorFixer": "kicad_agent.llm.unified_parsers",
+        # Provider abstraction
+        "LLMProvider": "kicad_agent.llm.provider",
+        "AnthropicProvider": "kicad_agent.llm.provider",
+        "MockProvider": "kicad_agent.llm.provider",
+        "get_provider": "kicad_agent.llm.provider",
     }
 
     if name not in _lazy:
@@ -91,6 +96,7 @@ def __getattr__(name: str):
         "extract_json_from_text",
         "TextIntentParser", "TextErrorFixer", "TextCritiqueParser",
         "UnifiedIntentParser", "UnifiedErrorFixer",
+        "LLMProvider", "AnthropicProvider", "MockProvider", "get_provider",
     }
 
     if name not in _no_anthropic_required:
@@ -104,6 +110,7 @@ def __getattr__(name: str):
 
 
 __all__ = [
+    "AnthropicProvider",
     "ComponentSuggester",
     "COMPONENT_SYSTEM_PROMPT",
     "ConfidenceScore",
@@ -120,6 +127,7 @@ __all__ = [
     "FIX_SYSTEM_PROMPT",
     "FIX_TOOL",
     "FixResult",
+    "get_provider",
     "HybridLLMClient",
     "HybridResponse",
     "IntentParser",
@@ -128,8 +136,10 @@ __all__ = [
     "LLMClient",
     "LLMConfigError",
     "LLMGenerationResult",
+    "LLMProvider",
     "LLMRefinementIteration",
     "LLMRefinementResult",
+    "MockProvider",
     "SUGGEST_TOOL",
     "TextCritiqueParser",
     "TextErrorFixer",
