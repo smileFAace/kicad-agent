@@ -235,6 +235,132 @@ class TestAssignNetClass:
                 )
 
 
+class TestModifyCopperZone:
+    """Test copper zone modification by UUID."""
+
+    def test_modify_clearance(self):
+        """Add a zone, modify clearance, verify updated in board.zones."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pcb_path, ir = _create_minimal_pcb(Path(tmpdir))
+
+            add_copper_zone(ir, pcb_path, net_name="GND", layer="F.Cu", clearance=0.5)
+            zone_uuid = ir.board.zones[0].tstamp
+
+            from kicad_agent.ops.pcb_ops import modify_copper_zone
+            result = modify_copper_zone(ir, pcb_path, zone_uuid=zone_uuid, clearance=0.3)
+
+            assert result["modified"] is True
+            assert result["zone_uuid"] == zone_uuid
+            assert "clearance" in result["updated_fields"]
+            assert ir.board.zones[0].clearance == 0.3
+
+    def test_modify_net_name(self):
+        """Add a zone, change net_name, verify zone.net and zone.netName updated."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pcb_path, ir = _create_minimal_pcb(Path(tmpdir))
+
+            add_copper_zone(ir, pcb_path, net_name="GND", layer="F.Cu")
+            zone_uuid = ir.board.zones[0].tstamp
+
+            from kicad_agent.ops.pcb_ops import modify_copper_zone
+            result = modify_copper_zone(ir, pcb_path, zone_uuid=zone_uuid, net_name="VCC")
+
+            assert result["modified"] is True
+            zone = ir.board.zones[0]
+            assert zone.netName == "VCC"
+            # Net number should resolve to VCC's number (2)
+            assert zone.net == 2
+
+    def test_modify_nonexistent_uuid(self):
+        """modify_copper_zone raises ValueError for non-existent UUID."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pcb_path, ir = _create_minimal_pcb(Path(tmpdir))
+
+            from kicad_agent.ops.pcb_ops import modify_copper_zone
+            with pytest.raises(ValueError, match="not found"):
+                modify_copper_zone(ir, pcb_path, zone_uuid="nonexistent-uuid")
+
+    def test_modify_returns_updated_fields(self):
+        """Verify return dict lists only changed fields."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pcb_path, ir = _create_minimal_pcb(Path(tmpdir))
+
+            add_copper_zone(ir, pcb_path, net_name="GND", layer="F.Cu", clearance=0.5)
+            zone_uuid = ir.board.zones[0].tstamp
+
+            from kicad_agent.ops.pcb_ops import modify_copper_zone
+            result = modify_copper_zone(
+                ir, pcb_path,
+                zone_uuid=zone_uuid,
+                clearance=0.3,
+                priority=5,
+            )
+
+            assert "clearance" in result["updated_fields"]
+            assert "priority" in result["updated_fields"]
+            # net_name and layer should NOT be in updated_fields since not changed
+            assert "net_name" not in result["updated_fields"]
+
+
+class TestRemoveCopperZone:
+    """Test copper zone removal by UUID or index."""
+
+    def test_remove_by_uuid(self):
+        """Add zone, remove by UUID, verify gone from board.zones."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pcb_path, ir = _create_minimal_pcb(Path(tmpdir))
+
+            add_copper_zone(ir, pcb_path, net_name="GND", layer="F.Cu")
+            zone_uuid = ir.board.zones[0].tstamp
+
+            from kicad_agent.ops.pcb_ops import remove_copper_zone
+            result = remove_copper_zone(ir, pcb_path, zone_uuid=zone_uuid)
+
+            assert result["removed"] is True
+            assert result["zone_uuid"] == zone_uuid
+            assert len(ir.board.zones) == 0
+
+    def test_remove_by_index(self):
+        """Add zone, remove by index=0, verify gone."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pcb_path, ir = _create_minimal_pcb(Path(tmpdir))
+
+            add_copper_zone(ir, pcb_path, net_name="GND", layer="F.Cu")
+
+            from kicad_agent.ops.pcb_ops import remove_copper_zone
+            result = remove_copper_zone(ir, pcb_path, zone_index=0)
+
+            assert result["removed"] is True
+            assert len(ir.board.zones) == 0
+
+    def test_remove_no_identifier(self):
+        """remove_copper_zone raises ValueError when neither UUID nor index provided."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pcb_path, ir = _create_minimal_pcb(Path(tmpdir))
+
+            from kicad_agent.ops.pcb_ops import remove_copper_zone
+            with pytest.raises(ValueError, match="Must specify"):
+                remove_copper_zone(ir, pcb_path)
+
+    def test_remove_nonexistent_uuid(self):
+        """remove_copper_zone raises ValueError for non-existent UUID."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pcb_path, ir = _create_minimal_pcb(Path(tmpdir))
+
+            from kicad_agent.ops.pcb_ops import remove_copper_zone
+            with pytest.raises(ValueError, match="not found"):
+                remove_copper_zone(ir, pcb_path, zone_uuid="nonexistent-uuid")
+
+    def test_remove_out_of_range_index(self):
+        """remove_copper_zone raises IndexError for out-of-range index."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pcb_path, ir = _create_minimal_pcb(Path(tmpdir))
+
+            from kicad_agent.ops.pcb_ops import remove_copper_zone
+            with pytest.raises(IndexError):
+                remove_copper_zone(ir, pcb_path, zone_index=99)
+
+
 class TestSetBoardOutlineOperation:
     """Test set_board_outline operation via executor dispatch."""
 

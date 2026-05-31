@@ -88,6 +88,46 @@ class TestValidatePowerNets:
             assert key in power_result
 
 
+class TestHierarchicalPower:
+    """Test hierarchical sheet power span validation."""
+
+    def test_check_hierarchical_flag_default_true(self):
+        """ValidatePowerNetsOp defaults check_hierarchical to True."""
+        from kicad_agent.ops._schema_validation import ValidatePowerNetsOp
+        op = ValidatePowerNetsOp(target_file="test.kicad_sch")
+        assert op.check_hierarchical is True
+
+    def test_flat_validation_unchanged(self):
+        """validate_power_nets with check_hierarchical=False returns same structure as before."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sch_path = Path(tmpdir) / "test.kicad_sch"
+            sch = Schematic.create_new()
+            ir = _save_and_parse(sch_path, sch)
+
+            result = validate_power_nets(ir, sch_path, check_hierarchical=False)
+
+            # Must have the same keys as the original
+            assert "valid" in result
+            assert "unconnected_power_pins" in result
+            assert "power_nets" in result
+            assert "missing_power_symbols" in result
+            # hierarchical_issues should NOT be present when check_hierarchical=False
+            assert "hierarchical_issues" not in result
+
+    def test_hierarchical_returns_issues_key(self):
+        """validate_power_nets with check_hierarchical=True includes hierarchical_issues."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sch_path = Path(tmpdir) / "test.kicad_sch"
+            sch = Schematic.create_new()
+            ir = _save_and_parse(sch_path, sch)
+
+            result = validate_power_nets(ir, sch_path, check_hierarchical=True)
+
+            # hierarchical_issues should be present (even if empty list)
+            assert "hierarchical_issues" in result
+            assert isinstance(result["hierarchical_issues"], list)
+
+
 class TestCheckErcClean:
     """Test ERC clean check wrapper."""
 
