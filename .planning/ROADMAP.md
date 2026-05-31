@@ -708,7 +708,20 @@ Plans:
 **Goal**: Close the five remaining operation gaps for complete CRUD coverage
 **Depends on**: Phase 34
 **Requirements**: GEN-01, GEN-03, GEN-04, GEN-05, GEN-06
-**Plans**: TBD
+**Success Criteria** (what must be TRUE):
+  1. sym-lib-table and fp-lib-table can be queried for all entries via list_lib_entries
+  2. Net classes can be listed, modified, and removed in .kicad_dru files
+  3. Design rules can be listed, modified, and removed in .kicad_dru files
+  4. .kicad_pro settings can be modified without losing unknown JSON keys
+  5. erc_auto_fix chains parse_erc to repair dispatch with iteration limits
+  6. validate_power_nets traverses hierarchical sheets when check_hierarchical=True
+  7. Copper zones can be modified and removed by UUID or index
+**Plans**: 3 plans
+
+Plans:
+- [ ] 35-01-PLAN.md -- Full CRUD for project files: list/modify/remove lib entries, net classes, design rules, project settings (GEN-01, GEN-06)
+- [ ] 35-02-PLAN.md -- erc_auto_fix meta-operation with violation-to-repair dispatch and iteration control (GEN-03)
+- [ ] 35-03-PLAN.md -- Hierarchical power validation + copper zone modify/delete (GEN-04, GEN-05)
 
 ### Phase 36: Multi-Layer Routing
 **Goal**: Multi-layer routing with impedance control and length matching
@@ -763,3 +776,4 @@ Phases execute in numeric order: 1 -> 2 -> ... -> 29 -> 30 -> 31
 | 32. Executor Performance | 2/2 | Complete | 2026-05-30 |
 | 33. Undo/Redo Stack | 2/2 | Complete | 2026-05-30 |
 | 34. LLM Provider Abstraction | 2/2 | Complete | 2026-05-31 |
+| 35. Remaining Ops Gaps | 0/3 | Planned | -- |
