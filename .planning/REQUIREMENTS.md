@@ -131,12 +131,12 @@ Two-tier phase: first close the practical operations gap, then build generative 
 
 **Tier 1: Complete the Operations Layer**
 
-- [ ] **GEN-01**: Parse and modify project-level files: sym-lib-table, fp-lib-table (add/remove/list library entries), .kicad_dru (read/write custom DRC rules), .kicad_pro (read/modify project settings)
+- [x] **GEN-01**: Parse and modify project-level files: sym-lib-table, fp-lib-table (add/remove/list library entries), .kicad_dru (read/write custom DRC rules), .kicad_pro (read/modify project settings)
 - [x] **GEN-02**: Manufacturing export wrappers via kicad-cli: Gerber, drill, BOM (with field customization and grouping), netlist (kicadsexpr, kicadxml), position files (ASCII, CSV), STEP 3D, PDF/SVG documentation, board statistics
 - [ ] **GEN-03**: Schematic ERC repair: auto-fix wire snapping to pins, remove orphaned labels, detect shorted nets, fix pin_not_connected errors with no-connect markers
 - [ ] **GEN-04**: Power net validation: check all power pins have connected power symbols, verify power nets span hierarchical sheets, detect missing GND/+3V3 before PCB work begins
 - [ ] **GEN-05**: PCB copper zone operations: add/modify/fill copper pour zones with net assignment, layer selection, clearance, and priority settings
-- [ ] **GEN-06**: Net class and design rule operations: assign net classes (Default, Power, etc.) with track width/via size/clearance, add custom DRC rules to .kicad_dru, board outline definition
+- [x] **GEN-06**: Net class and design rule operations: assign net classes (Default, Power, etc.) with track width/via size/clearance, add custom DRC rules to .kicad_dru, board outline definition
 
 **Tier 2: Build Generation on Top**
 
@@ -273,12 +273,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | GRPO-05 | Phase 9: GRPO Spatial Reasoning Training | Pending | 09-03 |
 | GRPO-06 | Phase 9: GRPO Spatial Reasoning Training | Pending | 09-04 |
 | GRPO-07 | Phase 9: GRPO Spatial Reasoning Training | Pending | 09-04 |
-| GEN-01 | Phase 10: AI-Driven PCB Generation | Pending | 10-01 |
+| GEN-01 | Phase 35: Remaining Ops Gaps | Complete | 35-01 |
 | GEN-02 | Phase 10: AI-Driven PCB Generation | Complete | 10-02 |
 | GEN-03 | Phase 10: AI-Driven PCB Generation | Pending | 10-03 |
 | GEN-04 | Phase 10: AI-Driven PCB Generation | Pending | 10-03 |
 | GEN-05 | Phase 10: AI-Driven PCB Generation | Pending | 10-03 |
-| GEN-06 | Phase 10: AI-Driven PCB Generation | Pending | 10-01, 10-03 |
+| GEN-06 | Phase 35: Remaining Ops Gaps | Complete | 35-01 |
 | GEN-07 | Phase 10: AI-Driven PCB Generation | Complete | 10-04 |
 | GEN-08 | Phase 10: AI-Driven PCB Generation | Complete | 10-04 |
 | GEN-09 | Phase 10: AI-Driven PCB Generation | Complete | 10-05 |
@@ -460,11 +460,11 @@ Production hardening, undo/redo, LLM provider abstraction, remaining ops gaps, a
 
 ### Remaining Ops Gaps (Phase 35)
 
-- [ ] **GEN-01**: Parse and modify project-level files: sym-lib-table, fp-lib-table, .kicad_dru, .kicad_pro
+- [x] **GEN-01**: Parse and modify project-level files: sym-lib-table, fp-lib-table, .kicad_dru, .kicad_pro
 - [ ] **GEN-03**: Schematic ERC repair: auto-fix wire snapping, orphaned labels, shorted nets, pin_not_connected
 - [ ] **GEN-04**: Power net validation: check all power pins connected, verify across hierarchical sheets
 - [ ] **GEN-05**: PCB copper zone operations: add/modify/fill copper pour zones
-- [ ] **GEN-06**: Net class and design rule operations: assign net classes, custom DRC rules, board outline
+- [x] **GEN-06**: Net class and design rule operations: assign net classes, custom DRC rules, board outline
 
 ### Multi-Layer Routing (Phase 36)
 

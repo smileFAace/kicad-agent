@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v2.4
 milestone_name: production-hardening
-status: ready-to-execute
-stopped_at: Phase 35 planned (3 plans, 1 wave)
-last_updated: "2026-05-31T06:00:00.000Z"
+status: executing
+stopped_at: Completed 35-01-PLAN.md
+last_updated: "2026-05-31T16:04:15Z"
 last_activity: 2026-05-31
 progress:
   total_phases: 37
   completed_phases: 34
-  total_plans: 91
-  completed_plans: 91
-  percent: 100
+  total_plans: 94
+  completed_plans: 92
+  percent: 98
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-29)
 
 **Core value:** LLM -> intent JSON -> AST mutation -> valid KiCad file. Zero corruption, every time.
-**Current focus:** v2.4 production-hardening -- undo/redo DONE, LLM abstraction DONE, remaining ops next.
+**Current focus:** v2.4 production-hardening -- undo/redo DONE, LLM abstraction DONE, remaining ops IN PROGRESS.
 Last activity: 2026-05-31
 
 ## Current Position
 
-Phase: 35 (Remaining Ops Gaps) -- PLANNED
-Status: **Phase 35 Planned** -- 3 plans, 1 wave, ready to execute (GEN-01/03/04/05/06)
-Last activity: 2026-05-31 -- Phase 35 planned (3 plans, verification PASSED)
+Phase: 35 (Remaining Ops Gaps) -- EXECUTING
+Status: **Plan 01 complete** -- 8 new project CRUD operations (71 total). Plans 02-03 remaining.
+Last activity: 2026-05-31 -- Completed 35-01-PLAN.md
 
 ## Previous Milestone (v2.3)
 
@@ -67,6 +67,10 @@ Recent decisions affecting current work:
 - [v2.4]: LLMProvider protocol is superset of LLMBackend -- providers satisfy both protocols
 - [v2.4]: Provider selection via KICAD_LLM_PROVIDER env var (default "anthropic")
 - [v2.4]: Lazy LLMClient imports in consumers to avoid hard anthropic dependency
+- [v2.4]: ModifyNetClassOp uses Optional[float] fields for partial updates (None=keep existing)
+- [v2.4]: write_project_settings operates on raw JSON dict to preserve unknown keys
+- [v2.4]: List handlers are read-only (no serialize), returning {items, count}
+- [v2.4]: Atomic write via tempfile+os.replace for .kicad_pro (Council FE-02)
 
 ### Pending Todos
 
@@ -82,5 +86,5 @@ None.
 
 ## Session Continuity
 
-Stopped at: Phase 35 planned
-Resume with: /gsd-execute-phase 35
+Stopped at: Completed 35-01-PLAN.md
+Resume with: /gsd-execute-phase 35 (plans 02-03 remaining)
