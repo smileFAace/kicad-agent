@@ -24,6 +24,10 @@ import re
 
 logger = logging.getLogger(__name__)
 
+# KiCad 10 requires (at X Y angle). kiutils may serialize zero rotation as
+# (at X Y), so the normalizer fills in the missing third argument.
+_AT_NO_ROTATION = re.compile(r'\(at\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s*\)')
+
 # Scientific notation pattern that avoids matching inside quoted strings.
 # Applied only to unquoted segments after string-aware tokenization.
 # Requires decimal point in mantissa (e.g. 1.5e-07) to avoid matching
@@ -37,6 +41,7 @@ def normalize_kicad_output(content: str) -> str:
     Applies normalization rules in order:
     1. Fix scientific notation (Pitfall 13) -- e.g. 1.5e-07 -> 0.0000002
     2. Normalize whitespace to spaces with consistent indentation (D-12)
+    3. Add missing zero rotation to (at X Y) tokens for KiCad 10 format
 
     IMPORTANT: Each rule must preserve two-pass round-trip stability.
     If pass1 != pass2 after adding a rule, the rule breaks determinism (Pitfall 3).
@@ -49,7 +54,46 @@ def normalize_kicad_output(content: str) -> str:
     """
     content = _fix_scientific_notation(content)
     content = _normalize_whitespace(content)
+    content = _fix_at_rotation(content)
     return content
+
+
+def _fix_at_rotation(content: str) -> str:
+    """Add missing zero rotation to (at X Y) tokens (KiCad 10 format).
+
+    KiCad 10+ requires the rotation angle as a third argument in all
+    (at ...) S-expressions. kiutils may serialize position objects
+    without rotation as (at X Y). This function appends 0 to these.
+
+    Matches: (at 150 100) -> (at 150 100 0)
+    Does NOT match: (at 150 100 0) or (at 150 100 90.0)
+
+    Uses string-aware tokenization to skip quoted strings, same as
+    _fix_scientific_notation, to avoid false matches in property values.
+    """
+    result_parts = []
+    i = 0
+    while i < len(content):
+        if content[i] == '"':
+            j = i + 1
+            while j < len(content):
+                if content[j] == "\\" and j + 1 < len(content):
+                    j += 2
+                elif content[j] == '"':
+                    j += 1
+                    break
+                else:
+                    j += 1
+            result_parts.append(content[i:j])
+            i = j
+        else:
+            j = content.find('"', i)
+            if j == -1:
+                j = len(content)
+            segment = content[i:j]
+            result_parts.append(_AT_NO_ROTATION.sub(r'(at \1 \2 0)', segment))
+            i = j
+    return "".join(result_parts)
 
 
 def _fix_scientific_notation(content: str) -> str:

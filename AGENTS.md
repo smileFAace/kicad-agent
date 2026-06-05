@@ -31,6 +31,14 @@ Avoid fixed local paths in examples. Commands should run from the current reposi
 - After schematic edits, run ERC when KiCad CLI is available. After PCB edits, run DRC when KiCad CLI is available. Report clearly when validation cannot be run.
 - Do not edit generated cache files such as `__pycache__` artifacts.
 
+## Current Schematic Editing Lessons
+
+The backend is valuable for AI-safe KiCad editing: agents can create projects and schematics, create and embed symbols, place components, add power symbols and wires, swap symbols, serialize through the normalizer, and run structural validation without raw S-expression editing. Use those capabilities first.
+
+The current gap is schematic connectivity at the circuit-intent level. `add_wire` only draws a wire between explicit coordinates, and existing repair/snapping only adjusts endpoints already close to real pins. There is no operation that connects by semantic pin or net intent, such as `connect_pins(U1.34, J3.2)` or `connect_net("+3V3", ["U1.24", "C1.1"])`. Do not rely on hand-estimated coordinates for nontrivial schematics; KiCad ERC will catch the mismatch.
+
+Next implementation target: add a backend operation that resolves real pin endpoints from embedded/library symbols via `SchematicIR.get_pin_positions()`, accepts reference/pin descriptors, generates exact wire endpoints or labels, and verifies the result with KiCad CLI ERC. This should become the preferred path for building minimal systems and other schematic workflows.
+
 ## Useful Commands
 
 ```bash

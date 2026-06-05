@@ -41,14 +41,14 @@ from kicad_agent.ir.pcb_ir import _escape_sexpr_value
 def _atomic_write(file_path: Path, content: str) -> None:
     """Write content atomically via temp file + rename to prevent TOCTOU races."""
     fd, tmp_path = tempfile.mkstemp(
-        dir=file_path.parent,
+        dir=file_path.resolve().parent,
         prefix=".kicad_",
         suffix=".tmp",
     )
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
-        os.rename(tmp_path, str(file_path))
+        os.replace(tmp_path, str(file_path.resolve()))
     except BaseException:
         try:
             os.unlink(tmp_path)

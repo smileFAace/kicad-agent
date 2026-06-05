@@ -15,6 +15,7 @@ from kiutils.schematic import Schematic
 
 from kicad_agent.parser import parse_schematic
 from kicad_agent.serializer.normalizer import (
+    _fix_at_rotation,
     _fix_scientific_notation,
     _normalize_whitespace,
     normalize_kicad_output,
@@ -36,10 +37,10 @@ class TestScientificNotation:
         assert "0.000000" in result
 
     def test_preserves_regular_floats(self) -> None:
-        """Regular floats are left unchanged."""
+        """Regular floats are left unchanged except missing at rotation."""
         input_str = "(at 10.5 20.3)"
         result = normalize_kicad_output(input_str)
-        assert result == input_str
+        assert result == "(at 10.5 20.3 0)"
 
     def test_preserves_integers(self) -> None:
         """Integers are left unchanged."""
@@ -80,15 +81,39 @@ class TestWhitespaceNormalization:
     """D-12: Whitespace normalization."""
 
     def test_tabs_replaced_with_spaces(self) -> None:
-        """Tabs are replaced with 4 spaces."""
+        """Tabs are replaced with 4 spaces before at rotation is normalized."""
         result = normalize_kicad_output("(at\t10 20)")
-        assert result == "(at    10 20)"
+        assert result == "(at 10 20 0)"
 
     def test_already_normalized_unchanged(self) -> None:
-        """Content without tabs is unchanged (except sci-notation fixes)."""
+        """Content without tabs is unchanged except KiCad 10 at rotation fixes."""
         input_str = "(at 10 20)"
         result = normalize_kicad_output(input_str)
-        assert result == input_str
+        assert result == "(at 10 20 0)"
+
+
+class TestAtRotationNormalization:
+    """KiCad 10 requires all (at X Y) tokens to include rotation."""
+
+    def test_adds_zero_rotation(self) -> None:
+        """Missing rotation is normalized to explicit zero."""
+        assert _fix_at_rotation("(at 150 100)") == "(at 150 100 0)"
+
+    def test_preserves_existing_rotation(self) -> None:
+        """Existing angle values are not changed."""
+        assert _fix_at_rotation("(at 150 100 90)") == "(at 150 100 90)"
+
+    def test_preserves_quoted_strings(self) -> None:
+        """Quoted text that looks like an at token is not modified."""
+        result = _fix_at_rotation('(property "note" "keep (at 1 2)") (at 3 4)')
+        assert '"keep (at 1 2)"' in result
+        assert "(at 3 4 0)" in result
+
+    def test_idempotent(self) -> None:
+        """Applying the rule twice produces identical output."""
+        first = _fix_at_rotation("(at -20 23) (at 0 0 90)")
+        second = _fix_at_rotation(first)
+        assert first == second
 
 
 class TestDeterminism:
