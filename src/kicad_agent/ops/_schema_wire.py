@@ -39,6 +39,33 @@ class AddWireOp(BaseModel):
         return v
 
 
+class ConnectPinsOp(BaseModel):
+    """Connect two schematic pins by reference and pin number/name.
+
+    This is the semantic counterpart to ``add_wire``. Instead of requiring
+    callers to hand-compute coordinates, it resolves real pin endpoints from
+    embedded library symbols and adds a wire between them.
+
+    Pin references use ``REF.PIN`` format, e.g. ``U1.34`` or ``J3.Pin_2``.
+    """
+
+    op_type: Literal["connect_pins"] = "connect_pins"
+    target_file: TargetFile
+    source: str = Field(min_length=3, max_length=128, description="Source pin as REF.PIN")
+    target: str = Field(min_length=3, max_length=128, description="Target pin as REF.PIN")
+
+    @field_validator("source", "target")
+    @classmethod
+    def _validate_pin_ref(cls, v: str) -> str:
+        v = _validate_sexpr_safe_string(v.strip())
+        if "." not in v:
+            raise ValueError("Pin reference must use REF.PIN format, e.g. U1.34")
+        ref, pin = v.split(".", 1)
+        if not ref or not pin:
+            raise ValueError("Pin reference must include both reference and pin")
+        return v
+
+
 class AddLabelOp(BaseModel):
     """Add a net label to a schematic (local, global, or hierarchical).
 

@@ -71,6 +71,57 @@ def test_add_wire_file_unchanged_on_failure(tmp_path: Path) -> None:
     assert not result.success
 
 
+def test_connect_pins_executor_uses_real_pin_positions(project_dir: Path) -> None:
+    """connect_pins resolves REF.PIN descriptors and adds a wire at pin endpoints."""
+    from kicad_agent.ir.schematic_ir import SchematicIR
+    from kicad_agent.parser import parse_schematic
+
+    op_json = json.dumps({
+        "op_type": "connect_pins",
+        "target_file": FIXTURE_SCH,
+        "source": "J1.1",
+        "target": "J1.2",
+    })
+    result = handle_operation(op_json, project_dir=project_dir)
+    assert isinstance(result, OperationResult)
+    assert result.success
+    assert result.operation_type == "connect_pins"
+
+    sch_path = project_dir / FIXTURE_SCH
+    ir = SchematicIR(_parse_result=parse_schematic(sch_path))
+    pins = {
+        (p["reference"], p["pin_number"]): (p["x"], p["y"])
+        for p in ir.get_pin_positions()
+    }
+    source_xy = pins[("J1", "1")]
+    target_xy = pins[("J1", "2")]
+
+    assert result.details["wire"]["start"] == [source_xy[0], source_xy[1]]
+    assert result.details["wire"]["end"] == [target_xy[0], target_xy[1]]
+
+    wires = ir.get_wire_endpoints()
+    assert any(
+        w["start_x"] == source_xy[0]
+        and w["start_y"] == source_xy[1]
+        and w["end_x"] == target_xy[0]
+        and w["end_y"] == target_xy[1]
+        for w in wires
+    )
+
+
+def test_connect_pins_unknown_pin_returns_error(project_dir: Path) -> None:
+    """connect_pins fails clearly when a REF.PIN descriptor cannot resolve."""
+    op_json = json.dumps({
+        "op_type": "connect_pins",
+        "target_file": FIXTURE_SCH,
+        "source": "J1.999",
+        "target": "J1.2",
+    })
+    result = handle_operation(op_json, project_dir=project_dir)
+    assert not result.success
+    assert result.operation_type == "connect_pins"
+
+
 # ---------------------------------------------------------------------------
 # add_label
 # ---------------------------------------------------------------------------

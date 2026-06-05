@@ -198,6 +198,7 @@ from kicad_agent.ops._schema_footprint import (  # noqa: E402
 )
 from kicad_agent.ops._schema_wire import (  # noqa: E402
     AddWireOp,
+    ConnectPinsOp,
     AddLabelOp,
     AddPowerOp,
     AddNoConnectOp,
@@ -308,6 +309,7 @@ class Operation(BaseModel):
         | VerifyPinMapOp
         | UpdateFootprintFromLibraryOp
         | AddWireOp
+        | ConnectPinsOp
         | AddLabelOp
         | AddPowerOp
         | AddNoConnectOp
@@ -412,6 +414,7 @@ __all__ = [
     "UpdateFootprintFromLibraryOp",
     # Wire ops
     "AddWireOp",
+    "ConnectPinsOp",
     "AddLabelOp",
     "AddPowerOp",
     "AddNoConnectOp",

@@ -103,7 +103,7 @@ class TestSchemaSplit:
             VerifyPinMapOp, UpdateFootprintFromLibraryOp,
         )
         from kicad_agent.ops._schema_wire import (
-            AddWireOp, AddLabelOp, AddPowerOp, AddNoConnectOp, AddJunctionOp,
+            AddWireOp, ConnectPinsOp, AddLabelOp, AddPowerOp, AddNoConnectOp, AddJunctionOp,
         )
         from kicad_agent.ops._schema_library import AddLibEntryOp, RemoveLibEntryOp
         from kicad_agent.ops._schema_pcb import (
@@ -140,7 +140,7 @@ class TestSchemaSplit:
             RenumberRefsOp, ValidateRefsOp, AnnotateOp, CrossRefCheckOp,
             AssignFootprintOp, SwapFootprintOp, ValidateFootprintOp,
             VerifyPinMapOp, UpdateFootprintFromLibraryOp,
-            AddWireOp, AddLabelOp, AddPowerOp, AddNoConnectOp, AddJunctionOp,
+            AddWireOp, ConnectPinsOp, AddLabelOp, AddPowerOp, AddNoConnectOp, AddJunctionOp,
             AddLibEntryOp, RemoveLibEntryOp,
             AddNetClassOp, AddDesignRuleOp,
             RepairSchematicOp, ValidatePowerNetsOp, ValidateSchematicOp,

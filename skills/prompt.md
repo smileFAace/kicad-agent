@@ -660,6 +660,34 @@ Add a wire segment between two points in a schematic.
 
 ---
 
+#### connect_pins
+
+Connect two schematic pins by reference and pin number/name. This resolves real pin endpoints from the embedded/library symbol data, then adds a wire between those endpoints. Prefer this over manual `add_wire` coordinates when connecting component pins.
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op_type` | string | Must be `"connect_pins"` |
+| `target_file` | string | Relative path to `.kicad_sch` file |
+| `source` | string | Source pin in `REF.PIN` format, e.g. `"U1.34"` or `"J3.Pin_2"` |
+| `target` | string | Target pin in `REF.PIN` format, e.g. `"J3.2"` |
+
+**Example:**
+
+```json
+{
+  "root": {
+    "op_type": "connect_pins",
+    "target_file": "stm32-minimal.kicad_sch",
+    "source": "U1.34",
+    "target": "J3.2"
+  }
+}
+```
+
+---
+
 #### add_label
 
 Add a net label to a schematic (local, global, or hierarchical).
@@ -2003,6 +2031,7 @@ Net names reject whitespace-only strings. If a name is `"   "` (spaces only), th
 | `verify_pin_map` | all | target_file, reference, footprint_lib_id |
 | `update_footprint_from_library` | pcb | target_file, reference |
 | `add_wire` | sch | target_file, start_x, start_y, end_x, end_y |
+| `connect_pins` | sch | target_file, source, target |
 | `add_label` | sch | target_file, name, position |
 | `add_power` | sch | target_file, name, position |
 | `add_no_connect` | sch | target_file, position |

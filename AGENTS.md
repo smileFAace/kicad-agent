@@ -13,7 +13,7 @@ This project provides AI-safe structural editing for KiCad files. The core rule 
 
 ## Source of Truth
 
-The implementation currently registers 74 operation types in `src/kicad_agent/ops/schema.py`. `skills/prompt.md` should mirror that schema for agent-facing field documentation, but when there is a conflict, trust the code schema and executor first.
+The implementation currently registers 75 operation types in `src/kicad_agent/ops/schema.py`. `skills/prompt.md` should mirror that schema for agent-facing field documentation, but when there is a conflict, trust the code schema and executor first.
 
 Use the current operation envelope everywhere:
 

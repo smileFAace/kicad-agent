@@ -260,6 +260,11 @@ def _handle_add_wire(op: Any, ir: SchematicIR, file_path: Path) -> dict[str, Any
     )
 
 
+@register_schematic("connect_pins")
+def _handle_connect_pins(op: Any, ir: SchematicIR, file_path: Path) -> dict[str, Any]:
+    return ir.connect_pins(source=op.source, target=op.target)
+
+
 @register_schematic("add_label")
 def _handle_add_label(op: Any, ir: SchematicIR, file_path: Path) -> dict[str, Any]:
     return ir.add_label(

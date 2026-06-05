@@ -214,7 +214,7 @@ The skill routes natural language requests through the Python backend — Claude
 
 ## Operations Reference
 
-The operation schema currently registers 74 operations. The sections below highlight common operations; see `skills/prompt.md` for the complete field-level reference.
+The operation schema currently registers 75 operations. The sections below highlight common operations; see `skills/prompt.md` for the complete field-level reference.
 
 ### Component Operations
 
@@ -337,7 +337,7 @@ LLM / CLI
 |--------|---------|
 | `kicad_agent.parser` | Parse KiCad files into structured AST (schematic, PCB, symbol, footprint) |
 | `kicad_agent.ir` | Intermediate representation with mutation tracking and transactions |
-| `kicad_agent.ops` | 74 operation handlers, Pydantic schema, operation executor |
+| `kicad_agent.ops` | 75 operation handlers, Pydantic schema, operation executor |
 | `kicad_agent.serializer` | Write valid KiCad files with UUID re-injection and normalization |
 | `kicad_agent.validation` | ERC/DRC gates via kicad-cli, structural validation, round-trip checks |
 | `kicad_agent.analysis` | Net connectivity graph analysis via networkx |

@@ -426,6 +426,50 @@ class SchematicIR(BaseIR):
             "end": [end_x, end_y],
         }
 
+    def connect_pins(self, source: str, target: str) -> dict[str, Any]:
+        """Connect two pins by semantic REF.PIN descriptors.
+
+        Args:
+            source: Source pin descriptor, e.g. ``"U1.34"`` or ``"J3.Pin_2"``.
+            target: Target pin descriptor, e.g. ``"J3.2"`` or ``"U1.SWDIO"``.
+
+        Returns:
+            Dict with resolved endpoints and wire details.
+        """
+        source_pin = self._resolve_pin_ref(source)
+        target_pin = self._resolve_pin_ref(target)
+
+        if source_pin["x"] == target_pin["x"] and source_pin["y"] == target_pin["y"]:
+            raise ValueError(f"Cannot connect {source!r} to {target!r}: endpoints are identical")
+
+        wire = self.add_wire(
+            start_x=source_pin["x"],
+            start_y=source_pin["y"],
+            end_x=target_pin["x"],
+            end_y=target_pin["y"],
+        )
+        return {
+            "source": source,
+            "target": target,
+            "source_pin": source_pin,
+            "target_pin": target_pin,
+            "wire": wire,
+        }
+
+    def _resolve_pin_ref(self, pin_ref: str) -> dict[str, Any]:
+        """Resolve a REF.PIN descriptor to one absolute pin endpoint."""
+        ref, pin_id = pin_ref.split(".", 1)
+        matches = [
+            pin for pin in self.get_pin_positions()
+            if pin["reference"] == ref
+            and (str(pin["pin_number"]) == pin_id or str(pin["pin_name"]) == pin_id)
+        ]
+        if not matches:
+            raise ValueError(f"Pin not found: {pin_ref!r}")
+        if len(matches) > 1:
+            raise ValueError(f"Pin reference is ambiguous: {pin_ref!r}")
+        return matches[0]
+
     def add_label(
         self,
         name: str,
