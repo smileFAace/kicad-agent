@@ -39,6 +39,30 @@ The current gap is schematic connectivity at the circuit-intent level. `add_wire
 
 Next implementation target: add a backend operation that resolves real pin endpoints from embedded/library symbols via `SchematicIR.get_pin_positions()`, accepts reference/pin descriptors, generates exact wire endpoints or labels, and verifies the result with KiCad CLI ERC. This should become the preferred path for building minimal systems and other schematic workflows.
 
+## Known Pitfalls
+
+The following mistakes caused real failures during schematic construction. Do not repeat them.
+
+1. **Don't skip the project's component search capabilities.** The project has a working MCP component search server (`src/kicad_agent/mcp/server.py`) for JLCPCB/EasyEDA, an EasyEDA crawler API (`src/kicad_agent/crawler/easyeda_api.py`), and an LLM component suggester (`src/kicad_agent/llm/component_suggester.py`). Never hand-write custom symbols for off-the-shelf ICs when these tools can retrieve real CAD data including pin definitions. Also has an ADI library fetcher (`src/kicad_agent/project/adi_library/`).
+
+2. **Verify library IDs exist on this machine before `add_component`.** Standard KiCad library names vary across versions. On KiCad 10, connectors are `Connector:Conn_01x02_Pin` (not `_Male`), polarized capacitors are `Device:C_Polarized_Small` (not `Device:CP`). Check `validate_schematic` output for unresolved references before building connections, and use `swap_symbol` when needed.
+
+3. **Never hand-estimate pin coordinates for wiring.** Use `connect_pins` (or `SchematicIR.get_pin_positions()` for custom scripts). Hand-drawn coordinate wires produced 334 ERC violations on first run. The `repair_wire_snapping` operation only snaps endpoints within 0.01mm tolerance -- it cannot fix wires placed at guessed positions.
+
+4. **Prefer orthogonal routing.** `connect_pins` defaults to orthogonal (horizontal then vertical). Direct diagonal wires cause `wire_dangling` ERC errors in KiCad unless endpoints align perfectly. Orthogonal corners automatically get junctions.
+
+5. **Run KiCad CLI ERC early and often.** The project's internal `validate_schematic` checks structure (format, resolution, power symbols, annotation) but does NOT catch KiCad's native electrical rule violations. `pin_not_connected`, `wire_dangling`, `power_pin_not_driven`, `endpoint_off_grid` all require `kicad-cli sch erc`.
+
+6. **Symbol pin spacing must match KiCad grid.** Our STM32F103C8T6 custom symbol used 2.5 mm pin spacing instead of 2.54 mm, causing 155 off-grid warnings. When creating symbols in-house, pin coordinates should be multiples of 1.27 mm (50 mil) at minimum.
+
+7. **Normalizer rules must exclude XY-only KiCad elements.** `no_connect` and `junction` in KiCad 10 accept only two-coordinate `(at x y)`, not `(at x y 0)`. The normalizer's `_fix_at_rotation` must skip these. Same for the format checker.
+
+8. **`get_pin_positions()` originally missed custom symbol pins.** It only collected pins from `lib_sym.units[*].pins`, but symbols created by `create_symbol` (like our STM32/AMS1117) store pins directly on `lib_sym.pins`. Fixed now -- verify custom symbol pins appear in position queries before building large connection lists.
+
+9. **On Windows, use `os.replace` not `os.rename` in atomic writes.** `os.rename` fails on Windows when the target already exists. `create_file.py` was fixed to use `os.replace` with resolved paths.
+
+10. **Clean old hand-drawn wires before rebuilding with `connect_pins`.** Old estimated wires create phantom endpoints that confuse ERC even after new correct wires are added. Remove them via `remove_dangling_wires` or by clearing `graphicalItems`.
+
 ## Useful Commands
 
 ```bash
