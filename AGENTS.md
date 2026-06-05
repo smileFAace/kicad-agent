@@ -39,6 +39,91 @@ The current gap is schematic connectivity at the circuit-intent level. `add_wire
 
 Next implementation target: add a backend operation that resolves real pin endpoints from embedded/library symbols via `SchematicIR.get_pin_positions()`, accepts reference/pin descriptors, generates exact wire endpoints or labels, and verifies the result with KiCad CLI ERC. This should become the preferred path for building minimal systems and other schematic workflows.
 
+## Project Capability Map
+
+Every module below is in `src/kicad_agent/`. Use these before writing ad-hoc code.
+
+| Domain | Module | What it does |
+|--------|--------|-------------|
+| **Component Data** | `crawler/easyeda_api.py` | Search JLCPCB/EasyEDA for components (LCSC numbers), download CAD data with real pin coordinates and footprints |
+| | `crawler/bulk_fetcher.py` | Batch-fetch CAD data for multiple LCSC parts |
+| | `crawler/github_discovery.py` | Discover KiCad libraries from GitHub |
+| | `mcp/server.py` | MCP stdio server exposing 4 tools: `search_components`, `get_component_details`, `search_fetch`, `suggest_components` |
+| | `mcp/tools.py` | Formatted search/fetch tool implementations wrapping EasyEdaClient |
+| | `llm/component_suggester.py` | LLM-based component suggestion from functional descriptions, returns validated `library_id` values |
+| | `project/adi_library/` | ADI (Analog Devices) footprint/symbol library: SamacSys client, local cache, fetcher, KiCad lib-table registration |
+| **File Operations** | `ops/schema.py` | 75 Pydantic operation models (add_component, create_symbol, connect_pins, repair, validate, etc.) |
+| | `ops/executor.py` | Operation dispatch with per-type handlers, transaction support, undo |
+| | `ops/create_file.py` | Create `.kicad_sch`, `.kicad_pcb`, `.kicad_pro`, `.kicad_sym` files |
+| | `ops/add_component.py` | Add schematic/PCB components with library resolution |
+| | `ops/_schema_wire.py` | `add_wire`, `add_label`, `add_power`, `add_no_connect`, `add_junction`, `connect_pins` |
+| | `ops/repair.py` | wire_snapping, orphaned label removal, no-connect placement, power flag, symbol library update, shorted net fix, pin type fix |
+| | `ops/swap_symbol.py` | `swap_symbol`, `embed_symbol` (copy symbol from library into schematic) |
+| | `ops/remove_ops.py` | Remove wires, labels, junctions, no-connects, components |
+| | `ops/array_replicate.py` | Array-replicate components in grid/linear patterns |
+| | `ops/duplicate_component.py` | Clone a component instance |
+| | `ops/connectivity_query.py` | Query connectivity components, net adjacency |
+| **Placement** | `placement/engine.py` | Hybrid placement: ML prediction → rule-based fallback → DRC validation → scoring |
+| | `placement/graph.py` | Netlist-to-graph conversion for placement optimization |
+| | `placement/interactive.py` | Interactive placement with user-fixed components and keepout zones |
+| | `placement/scoring.py` | Wire-length, clearance, edge penalties for placement quality |
+| | `placement/validation.py` | DRC clearance checks for placed components |
+| **Schematic Routing** | `schematic_routing/target_finder.py` | Find same-net pins as routing targets within distance |
+| | `schematic_routing/wire_router.py` | Generate L-shape/same-axis wire modifications toward targets |
+| | `schematic_routing/schematic_graph.py` | Parse schematic wire/pin/junction geometry into a routing graph |
+| | `schematic_routing/net_resolver.py` | Resolve which components belong to which nets |
+| | `schematic_routing/netlist_parser.py` | Parse KiCad netlist for connectivity info |
+| | `schematic_routing/batch_executor.py` | Batch-wire connections with net verification |
+| **PCB Routing** | `routing/pathfinder.py` | A* pathfinding over routing graph |
+| | `routing/graph.py` | Build routing grid with obstacle avoidance |
+| | `routing/bridge.py` | Route-to-segments conversion for PCB traces |
+| | `routing/constraints.py` | Clearance, width, via constraints |
+| | `routing/diff_pair.py` | Differential pair routing |
+| **Generation** | `generation/intent.py` | `GenerationIntent`: structured design spec with components, nets, power |
+| | `generation/pipeline.py` | `generate_design()`: intent → template board → operations → validation → export |
+| | `generation/template_schematic.py` | Auto-generate schematic from intent: placement, wiring, power symbols |
+| | `generation/template_board.py` | Auto-generate PCB from intent: board outline, component placement |
+| | `generation/op_planner.py` | Dependency-ordered operation sequences from intent |
+| | `generation/placement.py` | Component placement utilities for generated designs |
+| | `generation/refinement.py` | ERC/DRC-driven refinement loop |
+| **Validation** | `validation/format_check.py` | KiCad 10 format compliance (at rotation, wire stroke, UUIDs, parens) |
+| | `validation/symbol_resolution.py` | Check symbol lib_ids resolve against embedded, project, and global tables |
+| | `validation/symbol_mismatch.py` | Compare embedded symbols against library originals |
+| | `validation/grid_check.py` | Off-grid pin/wire endpoint detection |
+| | `validation/structural.py` | Structural operation pre-validation (library_id format, required fields) |
+| | `validation/erc_drc.py` | Run KiCad CLI ERC/DRC and parse reports |
+| | `validation/spatial_drc.py` | Spatial DRC: clearance violations, overlapping footprints |
+| | `validation/pipeline.py` | End-to-end validation pipeline (structural → format → ERC) |
+| | `validation/roundtrip.py` | Parse → serialize → re-parse round-trip verification |
+| **LLM Integration** | `llm/intent_parser.py` | Parse natural language design intents into GenerationIntent |
+| | `llm/design_critic.py` | LLM board layout review: clearance, thermal, routing issues |
+| | `llm/error_fixer.py` | LLM ERC/DRC error fix suggestions with operation sequences |
+| | `llm/pipeline.py` | Full LLM design pipeline |
+| | `llm/refinement.py` | ERC/DRC-driven iterative refinement with LLM fixes |
+| | `llm/backend.py` | Multi-provider LLM backend (Claude, OpenAI, local) |
+| | `llm/tools.py` | LLM tool definitions for component suggestion |
+| **Analysis** | `analysis/connectivity.py` | Net connectivity graph via networkx |
+| **Spatial** | `spatial/query.py` | Shapely STRtree spatial queries (proximity, containment, clearance) |
+| | `spatial/primitives.py` | Bounding boxes, spatial primitives |
+| | `spatial/extractor.py` | Extract spatial data from PCB/schematic files |
+| | `spatial/reasoning_chains.py` | Chain-of-thought spatial reasoning for layout issues |
+| **Cross-file** | `crossfile/propagation.py` | Propagate symbol/footprint library changes across all project files |
+| | `crossfile/atomic.py` | Atomic operations spanning multiple KiCad files |
+| | `crossfile/diff.py` | Structural diffs for change tracking |
+| | `crossfile/project_context.py` | Project file discovery, library path extraction from `.kicad_pro` |
+| **Export** | `export/bom.py` | Bill of materials generation |
+| | `export/gerber.py` | Gerber file export |
+| | `export/general.py` | General export utilities |
+| **LTspice** | `ltspice/` | Parse/write LTspice `.asc` files, net graph, KiCad symbol → LTspice mapping |
+| **Training** | `training/` | GRPO training, board/schematic chains, reward models, dataset generation |
+| **AI Tracking** | `ai_tracking/` | AI agent operation tracking, gap analysis, statistics |
+| **Infrastructure** | `ir/` | SchematicIR, PcbIR, SymbolLibIR, Transaction, undo stack |
+| | `parser/` | Parse all KiCad file types (schematic, PCB, symbol lib, footprint) |
+| | `serializer/` | Serialize with normalizer (sci notation → fixed, at rotation, whitespace) |
+| | `handler.py` | Top-level `handle_operation()` entry point |
+
+---
+
 ## Known Pitfalls
 
 The following mistakes caused real failures during schematic construction. Do not repeat them.
