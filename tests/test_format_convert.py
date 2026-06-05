@@ -13,7 +13,7 @@ from kicad_agent.ops.format_convert import (
     _fix_missing_rotation,
     _fix_stroke_format,
     _quote_uuids,
-    _remove_fields_autoplaced,
+    _fix_fields_autoplaced,
     _remove_net_elements,
     _remove_semicolon_comments,
     _replace_tabs,
@@ -120,11 +120,12 @@ def test_fix_stroke_format():
     assert result == '(stroke (width 0.254) (type solid))'
 
 
-def test_remove_fields_autoplaced():
-    """_remove_fields_autoplaced removes (fields_autoplaced) elements."""
+def test_fix_fields_autoplaced():
+    """_fix_fields_autoplaced converts bare (fields_autoplaced) to (fields_autoplaced yes)."""
     content = "before\n(fields_autoplaced)\nafter"
-    result = _remove_fields_autoplaced(content)
-    assert "(fields_autoplaced)" not in result
+    result = _fix_fields_autoplaced(content)
+    assert "(fields_autoplaced yes)" in result
+    assert "(fields_autoplaced)\n" not in result  # bare version removed
     assert "before" in result
     assert "after" in result
 

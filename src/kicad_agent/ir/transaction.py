@@ -20,7 +20,6 @@ Usage:
     # If exception occurs, auto-rollback restores original file.
 """
 
-import fcntl
 import logging
 import os
 import shutil
@@ -28,6 +27,39 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+
+# Cross-platform file locking
+try:
+    import fcntl
+    HAS_FCNTL = True
+except ImportError:
+    # Windows: use msvcrt for file locking
+    import msvcrt
+    HAS_FCNTL = False
+
+
+def _flock_exclusive_nb(fd) -> None:
+    """Acquire exclusive non-blocking lock (cross-platform)."""
+    if HAS_FCNTL:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    else:
+        # Windows: msvcrt.locking uses bytes range lock
+        try:
+            msvcrt.locking(fd.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError:
+            raise IOError("Cannot acquire lock")
+
+
+def _flock_release(fd) -> None:
+    """Release lock (cross-platform)."""
+    if HAS_FCNTL:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    else:
+        try:
+            fd.seek(0)
+            msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
 
 logger = logging.getLogger(__name__)
 
@@ -99,9 +131,9 @@ class Transaction:
                 # Try to acquire a blocking lock on the existing file
                 test_fd = open(self._lock_path, "r")
                 try:
-                    fcntl.flock(test_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    _flock_exclusive_nb(test_fd)
                     # Got the lock immediately — it was stale. Release and remove.
-                    fcntl.flock(test_fd, fcntl.LOCK_UN)
+                    _flock_release(test_fd)
                     test_fd.close()
                     self._lock_path.unlink(missing_ok=True)
                 except (OSError, IOError):
@@ -123,7 +155,7 @@ class Transaction:
         )
         self._lock_fd = os.fdopen(self._lock_fd, "w")
         try:
-            fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            _flock_exclusive_nb(self._lock_fd)
         except (OSError, IOError):
             self._lock_fd.close()
             self._lock_fd = None
@@ -137,7 +169,8 @@ class Transaction:
         self._snapshot_path = Path(self._snap_dir) / self._file_path.name
         shutil.copy2(self._file_path, self._snapshot_path)
         # Council H-03: Restrict snapshot file permissions
-        os.chmod(self._snapshot_path, 0o600)
+        if os.name != 'nt':  # Skip on Windows (chmod semantics differ)
+            os.chmod(self._snapshot_path, 0o600)
         return self
 
     def commit(self) -> TransactionResult:
@@ -240,7 +273,7 @@ class Transaction:
         """Release and remove the lock file (Council H-04)."""
         if self._lock_fd:
             try:
-                fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
+                _flock_release(self._lock_fd)
                 self._lock_fd.close()
             except (OSError, IOError):
                 pass
