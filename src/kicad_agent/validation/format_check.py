@@ -219,7 +219,14 @@ def _check_at_has_rotation(content: str) -> FormatCheck:
     Every placed symbol and sheet must specify rotation as the third numeric
     value in the (at ...) form.
     """
-    matches = _RE_AT_NO_ROTATION.findall(content)
+    matches = [
+        m.group(0)
+        for m in _RE_AT_NO_ROTATION.finditer(content)
+        if not re.search(
+            r"\((no_connect|junction)\s+$",
+            content[max(0, m.start() - 32):m.start()],
+        )
+    ]
     count = len(matches)
     if count == 0:
         return FormatCheck(

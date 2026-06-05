@@ -53,6 +53,10 @@ class ConnectPinsOp(BaseModel):
     target_file: TargetFile
     source: str = Field(min_length=3, max_length=128, description="Source pin as REF.PIN")
     target: str = Field(min_length=3, max_length=128, description="Target pin as REF.PIN")
+    route: Literal["orthogonal", "direct"] = Field(
+        default="orthogonal",
+        description="Routing style: orthogonal creates horizontal/vertical segments; direct creates one segment",
+    )
 
     @field_validator("source", "target")
     @classmethod

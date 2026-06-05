@@ -96,8 +96,9 @@ def test_connect_pins_executor_uses_real_pin_positions(project_dir: Path) -> Non
     source_xy = pins[("J1", "1")]
     target_xy = pins[("J1", "2")]
 
-    assert result.details["wire"]["start"] == [source_xy[0], source_xy[1]]
-    assert result.details["wire"]["end"] == [target_xy[0], target_xy[1]]
+    assert result.details["route"] == "orthogonal"
+    assert result.details["wires"][0]["start"] == [source_xy[0], source_xy[1]]
+    assert result.details["wires"][0]["end"] == [target_xy[0], target_xy[1]]
 
     wires = ir.get_wire_endpoints()
     assert any(

@@ -84,6 +84,21 @@ def test_remove_net_elements():
     assert "(wire ...)" in result
 
 
+def test_format_check_allows_xy_only_no_connect_and_junction():
+    """No-connect markers and junctions are valid with two-coordinate at forms."""
+    content = """
+(kicad_sch (version 20250114) (generator "kicad-agent")
+  (uuid "a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+  (no_connect (at 10 20) (uuid "11111111-1111-1111-1111-111111111111"))
+  (junction (at 30 40) (diameter 0) (color 0 0 0 0) (uuid "22222222-2222-2222-2222-222222222222"))
+  (symbol (lib_id "Device:R") (at 50 60 0) (uuid "33333333-3333-3333-3333-333333333333"))
+)
+"""
+    result = validate_kicad10_format(content, Path("test.kicad_sch"))
+    at_check = next(check for check in result.checks if check.name == "at_has_rotation")
+    assert at_check.passed
+
+
 def test_unwrap_schematic_objects():
     """_unwrap_schematic_objects removes wrapper, keeps children."""
     content = '(schematic_objects\n    (symbol (lib_id "Device:R") (at 50 30 0))\n  )\n)'

@@ -109,6 +109,30 @@ class TestAtRotationNormalization:
         assert '"keep (at 1 2)"' in result
         assert "(at 3 4 0)" in result
 
+    def test_preserves_xy_only_items(self) -> None:
+        """No-connect markers and junctions use KiCad's two-coordinate at form."""
+        content = (
+            "(no_connect (at 10 20) (uuid abc))\n"
+            "(junction (at 30 40) (uuid def))\n"
+            "(symbol (at 50 60))"
+        )
+        result = normalize_kicad_output(content)
+        assert "(no_connect (at 10 20)" in result
+        assert "(junction (at 30 40)" in result
+        assert "(symbol (at 50 60 0))" in result
+
+    def test_removes_rotation_from_xy_only_items(self) -> None:
+        """Existing extra rotation on no-connect markers and junctions is removed."""
+        content = (
+            "(no_connect (at 10 20 0) (uuid abc))\n"
+            "(junction (at 30 40 0) (uuid def))"
+        )
+        result = normalize_kicad_output(content)
+        assert "(no_connect (at 10 20)" in result
+        assert "(junction (at 30 40)" in result
+        assert "(at 10 20 0)" not in result
+        assert "(at 30 40 0)" not in result
+
     def test_idempotent(self) -> None:
         """Applying the rule twice produces identical output."""
         first = _fix_at_rotation("(at -20 23) (at 0 0 90)")

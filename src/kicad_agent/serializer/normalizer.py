@@ -27,6 +27,9 @@ logger = logging.getLogger(__name__)
 # KiCad 10 requires (at X Y angle). kiutils may serialize zero rotation as
 # (at X Y), so the normalizer fills in the missing third argument.
 _AT_NO_ROTATION = re.compile(r'\(at\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s*\)')
+_XY_ONLY_AT_WITH_ROTATION = re.compile(
+    r'\((no_connect|junction)\s+\(at\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+[-+]?\d+(?:\.\d+)?\)'
+)
 
 # Scientific notation pattern that avoids matching inside quoted strings.
 # Applied only to unquoted segments after string-aware tokenization.
@@ -55,6 +58,7 @@ def normalize_kicad_output(content: str) -> str:
     content = _fix_scientific_notation(content)
     content = _normalize_whitespace(content)
     content = _fix_at_rotation(content)
+    content = _fix_xy_only_item_at(content)
     return content
 
 
@@ -91,9 +95,22 @@ def _fix_at_rotation(content: str) -> str:
             if j == -1:
                 j = len(content)
             segment = content[i:j]
-            result_parts.append(_AT_NO_ROTATION.sub(r'(at \1 \2 0)', segment))
+            result_parts.append(_AT_NO_ROTATION.sub(_replace_at_without_rotation, segment))
             i = j
     return "".join(result_parts)
+
+
+def _replace_at_without_rotation(match: re.Match) -> str:
+    """Add rotation to an (at X Y) match unless the parent item is XY-only."""
+    prefix = match.string[max(0, match.start() - 32):match.start()]
+    if re.search(r"\((no_connect|junction)\s+$", prefix):
+        return match.group(0)
+    return f"(at {match.group(1)} {match.group(2)} 0)"
+
+
+def _fix_xy_only_item_at(content: str) -> str:
+    """Remove rotation from items whose KiCad syntax accepts only X/Y."""
+    return _XY_ONLY_AT_WITH_ROTATION.sub(r'(\1 (at \2 \3)', content)
 
 
 def _fix_scientific_notation(content: str) -> str:

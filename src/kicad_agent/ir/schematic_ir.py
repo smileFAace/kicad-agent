@@ -426,7 +426,7 @@ class SchematicIR(BaseIR):
             "end": [end_x, end_y],
         }
 
-    def connect_pins(self, source: str, target: str) -> dict[str, Any]:
+    def connect_pins(self, source: str, target: str, route: str = "orthogonal") -> dict[str, Any]:
         """Connect two pins by semantic REF.PIN descriptors.
 
         Args:
@@ -442,19 +442,52 @@ class SchematicIR(BaseIR):
         if source_pin["x"] == target_pin["x"] and source_pin["y"] == target_pin["y"]:
             raise ValueError(f"Cannot connect {source!r} to {target!r}: endpoints are identical")
 
-        wire = self.add_wire(
-            start_x=source_pin["x"],
-            start_y=source_pin["y"],
-            end_x=target_pin["x"],
-            end_y=target_pin["y"],
-        )
-        return {
+        if route == "direct" or source_pin["x"] == target_pin["x"] or source_pin["y"] == target_pin["y"]:
+            wires = [self.add_wire(
+                start_x=source_pin["x"],
+                start_y=source_pin["y"],
+                end_x=target_pin["x"],
+                end_y=target_pin["y"],
+            )]
+        elif route == "orthogonal":
+            corner_x = target_pin["x"]
+            corner_y = source_pin["y"]
+            wires = [
+                self.add_wire(
+                    start_x=source_pin["x"],
+                    start_y=source_pin["y"],
+                    end_x=corner_x,
+                    end_y=corner_y,
+                ),
+                self.add_wire(
+                    start_x=corner_x,
+                    start_y=corner_y,
+                    end_x=target_pin["x"],
+                    end_y=target_pin["y"],
+                ),
+            ]
+            junction = self._add_junction_if_missing(corner_x, corner_y)
+        else:
+            raise ValueError(f"Unsupported route style: {route!r}")
+
+        result = {
             "source": source,
             "target": target,
+            "route": route,
             "source_pin": source_pin,
             "target_pin": target_pin,
-            "wire": wire,
+            "wires": wires,
         }
+        if route == "orthogonal" and source_pin["x"] != target_pin["x"] and source_pin["y"] != target_pin["y"]:
+            result["junction"] = junction
+        return result
+
+    def _add_junction_if_missing(self, x: float, y: float) -> Optional[dict[str, Any]]:
+        """Add a junction at an orthogonal wire corner unless one exists."""
+        for junction in self.schematic.junctions:
+            if junction.position.X == x and junction.position.Y == y:
+                return None
+        return self.add_junction(x=x, y=y)
 
     def _resolve_pin_ref(self, pin_ref: str) -> dict[str, Any]:
         """Resolve a REF.PIN descriptor to one absolute pin endpoint."""
@@ -676,6 +709,7 @@ class SchematicIR(BaseIR):
         for lib_sym in sch.libSymbols:
             lib_id = getattr(lib_sym, "libId", "")
             pins: list = []
+            pins.extend(getattr(lib_sym, "pins", []))
             for unit in lib_sym.units:
                 pins.extend(unit.pins)
             lib_pin_map[lib_id] = pins

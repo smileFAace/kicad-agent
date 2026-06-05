@@ -673,6 +673,12 @@ Connect two schematic pins by reference and pin number/name. This resolves real 
 | `source` | string | Source pin in `REF.PIN` format, e.g. `"U1.34"` or `"J3.Pin_2"` |
 | `target` | string | Target pin in `REF.PIN` format, e.g. `"J3.2"` |
 
+**Optional fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `route` | string | `"orthogonal"` | Routing style: `"orthogonal"` for horizontal/vertical segments or `"direct"` for one segment |
+
 **Example:**
 
 ```json
