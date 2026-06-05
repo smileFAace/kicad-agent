@@ -43,7 +43,7 @@ If the argument starts with "analyze ":
 3. Run the analysis:
 
 ```bash
-cd ~/apps/kicad-agent && python3 -c "
+python3 -c "
 import json, sys
 from kicad_agent.inference import generate_analysis
 
@@ -71,7 +71,7 @@ Skip to Step 4 (do not proceed to Step 2/3 for JSON operations).
 If the argument is a JSON operation, validate it against the Pydantic operation schema:
 
 ```bash
-cd ~/apps/kicad-agent && python3 -c "
+python3 -c "
 import json, sys
 from kicad_agent.ops.schema import Operation
 op = Operation.model_validate_json(sys.stdin.read())
@@ -86,7 +86,7 @@ If validation fails, report the exact constraint violated and suggest correction
 Run the validated operation through the kicad-agent pipeline:
 
 ```bash
-cd ~/apps/kicad-agent && python3 -c "
+python3 -c "
 import json, sys
 from kicad_agent.ops.schema import Operation
 from kicad_agent.ops.executor import OperationExecutor
@@ -107,7 +107,7 @@ Present the execution result to the user:
 </process>
 
 <tracking>
-Every operation executed through this skill MUST be tracked in Beads:
+If Beads MCP tools are available in the current agent environment, track operations there:
 
 1. **Before executing** — If no Bead exists for the current task, create one:
    ```
@@ -124,12 +124,12 @@ Every operation executed through this skill MUST be tracked in Beads:
    mcp__beads__beads_create(title="KiCad: <finding>", labels="out-of-scope,kicad", deps="<current_task_bead>")
    ```
 
-4. **Validation failures** — Always create a Bead for ERC/DRC failures:
+4. **Validation failures** — Create a Bead for ERC/DRC failures when Beads is available:
    ```
    mcp__beads__beads_create(title="DRC violation: <summary>", labels="drc,kicad", priority="high")
    ```
 
-For GSD phase planning, use `/gsd-plan-phase` to structure KiCad work into phases (schematic → ERC → layout → DRC → export).
+For GSD phase planning, use `/gsd-plan-phase` if that skill exists in the current agent environment.
 </tracking>
 
 <context>
@@ -137,7 +137,7 @@ The full operation schema with field-level documentation, constraints, and JSON 
 
 The project CLAUDE.md at `.claude/CLAUDE.md` contains the complete tool inventory (kicad-cli commands, Python packages, workflow stages). Agents should consult it for exact CLI syntax instead of asking humans to run things manually.
 
-Supported file types: .kicad_sch (schematic), .kicad_pcb (PCB), .kicad_sym (symbol library), .kicad_mod (footprint library)
+Supported targets: .kicad_sch (schematic), .kicad_pcb (PCB), .kicad_sym (symbol library), .kicad_mod (footprint library), .kicad_dru (design rules), .kicad_pro (project settings), sym-lib-table, fp-lib-table
 KiCad version: 10+ only
 Position units: millimeters (mils not supported)
 Operations are atomic: one mutation per operation, one target file per operation

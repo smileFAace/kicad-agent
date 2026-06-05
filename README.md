@@ -45,14 +45,17 @@ kicad-agent solves this with **constrained structural editing** — the AI emits
 - Package distribution (PyPI, docs site)
 - CI/CD pipeline
 
-## Supported File Types
+## Supported Targets
 
-| File | Extension | Description |
-|------|-----------|-------------|
+| Target | Extension / Name | Description |
+|--------|------------------|-------------|
 | Schematic | `.kicad_sch` | Circuit schematics |
 | PCB Layout | `.kicad_pcb` | Board layouts |
 | Symbol Library | `.kicad_sym` | Component symbol definitions |
 | Footprint Library | `.kicad_mod` | Footprint definitions |
+| Design Rules | `.kicad_dru` | Net classes and custom DRC rules |
+| Project File | `.kicad_pro` | Project settings |
+| Library Tables | `sym-lib-table`, `fp-lib-table` | Symbol and footprint library registration |
 
 **KiCad 10+ only.**
 
@@ -211,7 +214,7 @@ The skill routes natural language requests through the Python backend — Claude
 
 ## Operations Reference
 
-74 operations across 6 categories:
+The operation schema currently registers 74 operations. The sections below highlight common operations; see `skills/prompt.md` for the complete field-level reference.
 
 ### Component Operations
 
@@ -312,7 +315,7 @@ LLM / CLI
 +-------------+     +-------------+     +-------------+     +-------------+
 |   Parser     |---->|     IR      |---->|   Ops       |---->|  Serializer |
 |              |     |             |     |             |     |             |
-| S-expression |     | Intermediate|     | 47 atomic   |     | Valid KiCad |
+| S-expression |     | Intermediate|     | 74 atomic   |     | Valid KiCad |
 | -> AST       |     | representation   | operations  |     | S-expression|
 |              |     | + mutation  |     | + executor  |     | + normalize |
 | 4 file types |     | tracking    |     |             |     |             |
@@ -334,7 +337,7 @@ LLM / CLI
 |--------|---------|
 | `kicad_agent.parser` | Parse KiCad files into structured AST (schematic, PCB, symbol, footprint) |
 | `kicad_agent.ir` | Intermediate representation with mutation tracking and transactions |
-| `kicad_agent.ops` | 47 operation handlers, Pydantic schema, operation executor |
+| `kicad_agent.ops` | 74 operation handlers, Pydantic schema, operation executor |
 | `kicad_agent.serializer` | Write valid KiCad files with UUID re-injection and normalization |
 | `kicad_agent.validation` | ERC/DRC gates via kicad-cli, structural validation, round-trip checks |
 | `kicad_agent.analysis` | Net connectivity graph analysis via networkx |

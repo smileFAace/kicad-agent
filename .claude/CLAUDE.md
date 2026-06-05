@@ -52,17 +52,21 @@ kicad-cli fp upgrade <file.kicad_mod>                    # Upgrade footprint lib
 
 **kicad-agent operations (via `/kicad-agent` skill or direct Python):**
 ```bash
-cd ~/apps/kicad-agent && python3 -c "
-from kicad_agent.ops.executor import execute
-result = execute(operation_json)
-"
+python3 -c "
+import json, sys
+from kicad_agent.ops.schema import Operation
+from kicad_agent.ops.executor import OperationExecutor
+op = Operation.model_validate_json(sys.stdin.read())
+result = OperationExecutor(project_dir='.').execute(op)
+print(json.dumps(result, indent=2))
+" < operation.json
 ```
 
-47 operation types including: `add_component`, `remove_component`, `move_component`, `swap_symbol`, `modify_property`, `create_file`, `array_replicate`, `duplicate_component`, `pcb_ops`, `repair`, `erc_parser`, `validation_gates`.
+74 operation types are registered in `src/kicad_agent/ops/schema.py`, including component, net, reference, footprint, wire, remove, library, PCB, validation, creation, repair, sheet, query, and cross-file operations.
 
 ### Analysis & Inference
 ```bash
-cd ~/apps/kicad-agent && python3 -c "
+python3 -c "
 from kicad_agent.inference import generate_analysis
 result = generate_analysis('path/to/file.kicad_pcb')
 "
@@ -92,8 +96,8 @@ python3 -c "from spicelib import ..."
 
 ### 2. Schematic Capture
 ```bash
-# Edit via kicad-agent operations (JSON → AST mutation)
-/kicad-agent '{"op": "add_component", ...}'
+# Edit via kicad-agent operations (JSON -> AST mutation)
+/kicad-agent '{"root": {"op_type": "add_component", ...}}'
 
 # Validate schematic
 kicad-cli sch erc <project.kicad_sch>
@@ -107,7 +111,7 @@ kicad-cli sch erc <project.kicad_sch>    # Always run ERC after schematic edits
 ### 4. PCB Layout
 ```bash
 # Operations via kicad-agent
-/kicad-agent '{"op": "pcb_ops", ...}'
+/kicad-agent '{"root": {"op_type": "set_board_outline", ...}}'
 
 # 3D visualization
 kicad-cli pcb render <project.kicad_pcb> -o render.png --rotate "-45,0,45"
@@ -136,9 +140,9 @@ kicad-cli sch export pdf <project.kicad_sch> -o schematic.pdf
 ## Agent Rules
 
 - **Automate first.** Before asking a human to run something manually, check the tool inventory above. If a CLI command exists, use it. kicad-cli runs ERC, DRC, exports, renders, and upgrades without opening the GUI.
-- **Track in Beads.** Use `mcp__beads__beads_create` for every issue found or task started. Use `mcp__beads__beads_update` to track progress.
+- **Track in Beads when available.** If the Beads MCP tools are present, use `mcp__beads__beads_create` for issues or tasks and `mcp__beads__beads_update` for progress.
 - **Never skip validation.** Always run ERC after schematic edits. Always run DRC after layout edits. Always run both before manufacturing export.
-- **Out-of-scope findings must be tracked.** If you find an issue but it's not in the current task, create a Bead with labels "out-of-scope" before continuing.
+- **Track out-of-scope findings when available.** If Beads is present and you find an issue outside the current task, create a Bead with labels "out-of-scope" before continuing.
 - **Use kicad-agent operations, not raw file edits.** Never directly edit .kicad_sch or .kicad_pcb files with text tools. Use the operation executor for safe AST mutations.
 - **3D renders for visual review.** Use `kicad-cli pcb render` to generate PNG/JPEG images for visual inspection instead of asking the user to open KiCad.
 
@@ -149,7 +153,7 @@ src/kicad_agent/
   cli.py           — CLI entry point
   context.py       — Project context loading
   handler.py       — Operation dispatch
-  ops/             — 47 operation implementations
+  ops/             — 74 operation implementations
     executor.py    — Core operation executor
     schema*.py     — Pydantic operation schemas
     validation_gates.py — Pre/post validation

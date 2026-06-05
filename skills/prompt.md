@@ -4,7 +4,7 @@ This reference documents all operations supported by kicad-agent. Claude uses th
 
 **Key principle:** The LLM never touches raw S-expressions. It emits structured JSON intents, and the Python tool layer mutates the AST, serializes valid KiCad files, and validates via ERC/DRC gates.
 
-**Supported file types:** `.kicad_sch` (schematic), `.kicad_pcb` (PCB), `.kicad_sym` (symbol library), `.kicad_mod` (footprint library)
+**Supported targets:** `.kicad_sch` (schematic), `.kicad_pcb` (PCB), `.kicad_sym` (symbol library), `.kicad_mod` (footprint library), `.kicad_dru` (design rules), `.kicad_pro` (project settings), `sym-lib-table`, `fp-lib-table`
 
 **KiCad version:** 10+ only
 
@@ -752,6 +752,63 @@ Add a junction dot at a wire intersection in a schematic.
 
 ---
 
+#### remove_wire
+
+Remove a wire segment by UUID.
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op_type` | string | Must be `"remove_wire"` |
+| `target_file` | string | Relative path to `.kicad_sch` file |
+| `uuid` | string | UUID of the wire to remove |
+
+---
+
+#### remove_label
+
+Remove a net label by UUID.
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op_type` | string | Must be `"remove_label"` |
+| `target_file` | string | Relative path to `.kicad_sch` file |
+| `uuid` | string | UUID of the label to remove |
+| `label_type` | string | Scope: `local`, `global`, or `hierarchical` |
+
+---
+
+#### remove_junction
+
+Remove a junction dot by UUID.
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op_type` | string | Must be `"remove_junction"` |
+| `target_file` | string | Relative path to `.kicad_sch` file |
+| `uuid` | string | UUID of the junction to remove |
+
+---
+
+#### remove_no_connect
+
+Remove a no-connect flag by UUID.
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op_type` | string | Must be `"remove_no_connect"` |
+| `target_file` | string | Relative path to `.kicad_sch` file |
+| `uuid` | string | UUID of the no-connect flag to remove |
+
+---
+
 #### add_lib_entry
 
 Add a library entry to `sym-lib-table` or `fp-lib-table`.
@@ -786,6 +843,19 @@ Remove a library entry from `sym-lib-table` or `fp-lib-table`.
 | `op_type` | string | Must be `"remove_lib_entry"` |
 | `target_file` | string | Relative path to `sym-lib-table` or `fp-lib-table` |
 | `lib_name` | string | Library name to remove |
+
+---
+
+#### list_lib_entries
+
+List all library entries in `sym-lib-table` or `fp-lib-table`. This is read-only.
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op_type` | string | Must be `"list_lib_entries"` |
+| `target_file` | string | Relative path to `sym-lib-table` or `fp-lib-table` |
 
 ---
 
@@ -838,6 +908,60 @@ Assign a net class to a specific net in the PCB.
 
 ---
 
+#### modify_net_class
+
+Modify an existing net class in a `.kicad_dru` file. Only specified fields are changed.
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op_type` | string | Must be `"modify_net_class"` |
+| `target_file` | string | Relative path to `.kicad_dru` file |
+| `name` | string | Net class name to modify |
+
+**Optional fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `clearance` | float | `null` | New clearance in mm |
+| `track_width` | float | `null` | New track width in mm |
+| `via_diameter` | float | `null` | New via diameter in mm |
+| `via_drill` | float | `null` | New via drill in mm |
+| `uvia_diameter` | float | `null` | New micro-via diameter in mm |
+| `uvia_drill` | float | `null` | New micro-via drill in mm |
+| `diff_pair_width` | float | `null` | New diff-pair width in mm |
+| `diff_pair_gap` | float | `null` | New diff-pair gap in mm |
+
+---
+
+#### remove_net_class
+
+Remove a net class from a `.kicad_dru` file.
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op_type` | string | Must be `"remove_net_class"` |
+| `target_file` | string | Relative path to `.kicad_dru` file |
+| `name` | string | Net class name to remove |
+
+---
+
+#### list_net_classes
+
+List all net classes in a `.kicad_dru` file. This is read-only.
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op_type` | string | Must be `"list_net_classes"` |
+| `target_file` | string | Relative path to `.kicad_dru` file |
+
+---
+
 #### add_design_rule
 
 Add a custom DRC rule to `.kicad_dru`.
@@ -857,6 +981,70 @@ Add a custom DRC rule to `.kicad_dru`.
 |-------|------|---------|-------------|
 | `constraint_values` | object | `{}` | Key-value constraint parameters |
 | `condition` | string | `""` | KiCad condition expression |
+
+---
+
+#### modify_design_rule
+
+Modify an existing custom DRC rule in a `.kicad_dru` file. Only specified fields are changed.
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op_type` | string | Must be `"modify_design_rule"` |
+| `target_file` | string | Relative path to `.kicad_dru` file |
+| `name` | string | Rule name to modify |
+
+**Optional fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `constraint_type` | string | `null` | New constraint type |
+| `constraint_values` | object | `null` | New constraint parameters |
+| `condition` | string | `null` | New KiCad condition expression |
+| `layer` | string | `null` | New layer restriction |
+
+---
+
+#### remove_design_rule
+
+Remove a custom DRC rule from a `.kicad_dru` file.
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op_type` | string | Must be `"remove_design_rule"` |
+| `target_file` | string | Relative path to `.kicad_dru` file |
+| `name` | string | Rule name to remove |
+
+---
+
+#### list_design_rules
+
+List all custom DRC rules in a `.kicad_dru` file. This is read-only.
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op_type` | string | Must be `"list_design_rules"` |
+| `target_file` | string | Relative path to `.kicad_dru` file |
+
+---
+
+#### modify_project_settings
+
+Deep-merge JSON settings into a `.kicad_pro` project file while preserving unknown keys.
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op_type` | string | Must be `"modify_project_settings"` |
+| `target_file` | string | Relative path to `.kicad_pro` file |
+| `updates` | object | JSON sections to merge into the project file |
 
 ---
 
@@ -894,6 +1082,52 @@ Add a copper zone/ground pour to a PCB.
   }
 }
 ```
+
+---
+
+#### modify_copper_zone
+
+Modify an existing copper zone on a PCB. The zone is identified by UUID.
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op_type` | string | Must be `"modify_copper_zone"` |
+| `target_file` | string | Relative path to `.kicad_pcb` file |
+| `zone_uuid` | string | Zone UUID (`tstamp`) to modify |
+
+**Optional fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `net_name` | string | `null` | New net name |
+| `layer` | string | `null` | New copper layer |
+| `clearance` | float | `null` | New clearance in mm |
+| `min_width` | float | `null` | New minimum fill width in mm |
+| `priority` | int | `null` | New zone priority |
+
+---
+
+#### remove_copper_zone
+
+Remove a copper zone from a PCB. Identify it by `zone_uuid` when possible, or by `zone_index` as a fallback.
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op_type` | string | Must be `"remove_copper_zone"` |
+| `target_file` | string | Relative path to `.kicad_pcb` file |
+
+**Optional fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `zone_uuid` | string | `null` | Zone UUID (`tstamp`) |
+| `zone_index` | int | `null` | Zone index fallback |
+
+At least one of `zone_uuid` or `zone_index` is required.
 
 ---
 
@@ -1181,6 +1415,154 @@ Create a new symbol definition in a `.kicad_sym` library file. If the library do
 
 ---
 
+#### create_footprint
+
+Create a new standalone `.kicad_mod` footprint file with pads, reference/value text, optional courtyard, and attributes. The file must not already exist.
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op_type` | string | Must be `"create_footprint"` |
+| `target_file` | string | Relative path for the new `.kicad_mod` file |
+| `footprint_name` | string | Footprint name (1-128 chars, safe identifier) |
+
+**Optional fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `reference_prefix` | string | `"U"` | Reference prefix (e.g. U, R, C) |
+| `value` | string | `""` | Default footprint value |
+| `pads` | array | `[]` | Pad definitions (max 500) |
+| `courtyard_margin` | float | `0.25` | Courtyard margin in mm; 0 disables courtyard |
+| `attributes` | string | `"through_hole"` | One of: through_hole, smd, board_only |
+
+**Pad definition (`pads` array items):**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `number` | string | (required) | Pad number or designator |
+| `pad_type` | string | (required) | One of: smd, thru_hole, connect |
+| `shape` | string | (required) | One of: rect, roundrect, oval, circle, custom |
+| `position` | object | (required) | Pad center `{x, y}` in mm, optional `angle` |
+| `size_x` | float | (required) | Pad width in mm |
+| `size_y` | float | (required) | Pad height in mm |
+| `layers` | array | (required) | KiCad layer names |
+| `drill_diameter` | float | `null` | Required for thru_hole pads; forbidden for smd/connect |
+| `drill_offset_x` | float | `null` | Drill offset X in mm |
+| `drill_offset_y` | float | `null` | Drill offset Y in mm |
+
+---
+
+### Hierarchical Sheet Operations
+
+#### add_sheet
+
+Add a hierarchical sheet symbol to a schematic, optionally creating the child schematic file.
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op_type` | string | Must be `"add_sheet"` |
+| `target_file` | string | Relative path to parent `.kicad_sch` file |
+| `sheet_name` | string | Display name for the sheet symbol |
+| `file_name` | string | Relative path to child `.kicad_sch` |
+| `position` | object | Sheet symbol position `{x, y}` in mm |
+
+**Optional fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `width` | float | `30.0` | Sheet symbol width in mm |
+| `height` | float | `20.0` | Sheet symbol height in mm |
+| `create_sub_sheet` | bool | `true` | Auto-create child schematic if missing |
+
+---
+
+#### add_sheet_pin
+
+Add a pin to an existing hierarchical sheet symbol.
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op_type` | string | Must be `"add_sheet_pin"` |
+| `target_file` | string | Relative path to parent `.kicad_sch` file |
+| `sheet_uuid` | string | UUID of the target hierarchical sheet |
+| `pin_name` | string | Pin name matching a hierarchical label in the child sheet |
+| `position` | object | Pin position on the sheet boundary |
+
+**Optional fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `connection_type` | string | `"bidirectional"` | One of: input, output, bidirectional, tri_state, passive |
+
+---
+
+#### navigate_hierarchy
+
+Traverse hierarchical sheets from a root schematic. This is read-only.
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op_type` | string | Must be `"navigate_hierarchy"` |
+| `target_file` | string | Relative path to root `.kicad_sch` file |
+
+**Optional fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `max_depth` | int | `-1` | Max traversal depth; -1 means unlimited |
+
+---
+
+### Query Operations
+
+#### query_connectivity
+
+Query PCB connectivity using the net graph without modifying the file.
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op_type` | string | Must be `"query_connectivity"` |
+| `target_file` | string | Relative path to `.kicad_pcb` file |
+| `query_type` | string | One of: connected_pads, net_stats, are_connected, shortest_path, connected_components |
+
+**Optional fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `net_name` | string | `null` | Required when `query_type` is `connected_pads` |
+| `source` | array | `null` | Source pad `[footprint_ref, pad_number]`; required for path queries |
+| `target` | array | `null` | Target pad `[footprint_ref, pad_number]`; required for path queries |
+
+---
+
+### Cross-File Operations
+
+#### propagate_symbol_change
+
+Propagate a symbol or footprint library reference change across multiple files atomically.
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op_type` | string | Must be `"propagate_symbol_change"` |
+| `target_file` | string | Primary file path for execution routing; should be first in `target_files` |
+| `target_files` | array | Relative paths to mutate atomically |
+| `old_lib_id` | string | Current library ID to match |
+| `new_lib_id` | string | Replacement library ID |
+
+---
+
 ### Schematic Repair Operations
 
 #### parse_erc
@@ -1364,6 +1746,149 @@ Rebuild root schematic sheet pins from sub-sheet hierarchical labels. Reads all 
 
 ---
 
+#### update_symbols_from_library
+
+Re-embed symbols from their libraries when embedded definitions diverge from library versions.
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op_type` | string | Must be `"update_symbols_from_library"` |
+| `target_file` | string | Relative path to `.kicad_sch` file |
+
+**Optional fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `references` | array | `null` | Specific references to update; null updates all mismatches |
+| `dry_run` | bool | `false` | Report mismatches without modifying the file |
+
+---
+
+#### fix_shorted_nets
+
+Detect positions where multiple net names connect to the same items and remove the losing label according to strategy.
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op_type` | string | Must be `"fix_shorted_nets"` |
+| `target_file` | string | Relative path to `.kicad_sch` file |
+
+**Optional fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `strategy` | string | `"keep_first"` | One of: keep_first, keep_last, manual |
+| `keep_nets` | array | `null` | Net names to keep for manual strategy |
+| `dry_run` | bool | `false` | Report shorts without modifying the file |
+
+---
+
+#### fix_pin_type_mismatches
+
+Update embedded symbol pin electrical types to resolve pin-to-pin ERC violations.
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op_type` | string | Must be `"fix_pin_type_mismatches"` |
+| `target_file` | string | Relative path to `.kicad_sch` file |
+
+**Optional fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `pin_type_map` | object | `null` | Map from old type to new type, e.g. `{"unspecified": "passive"}` |
+| `dry_run` | bool | `false` | Report changes without modifying the file |
+
+---
+
+#### place_missing_units
+
+Place unplaced units of multi-unit symbols adjacent to existing units.
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op_type` | string | Must be `"place_missing_units"` |
+| `target_file` | string | Relative path to `.kicad_sch` file |
+
+**Optional fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `references` | array | `null` | Specific references to fix; null fixes all |
+| `offset_x` | float | `25.4` | Horizontal spacing between units in mm |
+| `offset_y` | float | `0.0` | Vertical spacing between units in mm |
+| `dry_run` | bool | `false` | Report placements without modifying the file |
+
+---
+
+#### remove_dangling_wires
+
+Remove wire segments with endpoints not connected to pins, labels, junctions, or other wire intersections.
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op_type` | string | Must be `"remove_dangling_wires"` |
+| `target_file` | string | Relative path to `.kicad_sch` file |
+
+**Optional fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `max_length_mm` | float | `null` | Only remove wires shorter than this length; null means no limit |
+| `dry_run` | bool | `false` | Report removals without modifying the file |
+
+---
+
+#### break_wire_shorts
+
+Remove bridge wires that short different nets together.
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op_type` | string | Must be `"break_wire_shorts"` |
+| `target_file` | string | Relative path to `.kicad_sch` file |
+
+**Optional fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `net_pairs` | array | `null` | Specific net pairs to break, e.g. `[["ADC_IN_1", "GND"]]`; null breaks all detected shorts |
+| `strategy` | string | `"shortest_path"` | One of: shortest_path, all_bridges |
+| `dry_run` | bool | `false` | Report bridge wires without modifying the file |
+
+---
+
+#### erc_auto_fix
+
+Run ERC, dispatch repairs by violation type, and iterate until violations are fixed or the iteration limit is reached.
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `op_type` | string | Must be `"erc_auto_fix"` |
+| `target_file` | string | Relative path to `.kicad_sch` file |
+
+**Optional fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `max_iterations` | int | `3` | Maximum repair iterations (1-10) |
+
+---
+
 ## Constraints
 
 All operations must satisfy these constraints. Violations produce clear error messages from the Pydantic validator.
@@ -1371,7 +1896,7 @@ All operations must satisfy these constraints. Violations produce clear error me
 ### target_file constraints
 
 - Must be a **relative path** (no leading `/`)
-- Must end in `.kicad_sch`, `.kicad_pcb`, `.kicad_sym`, or `.kicad_mod`
+- Must end in `.kicad_sch`, `.kicad_pcb`, `.kicad_sym`, `.kicad_mod`, `.kicad_dru`, or `.kicad_pro`, or be named `sym-lib-table` or `fp-lib-table`
 - No path traversal (`..` segments)
 - No null bytes
 - Length: 1-512 characters
@@ -1463,6 +1988,8 @@ Net names reject whitespace-only strings. If a name is `"   "` (spaces only), th
 | `modify_property` | sch, pcb | target_file, reference, property_name, new_value |
 | `duplicate_component` | sch, pcb | target_file, source_reference |
 | `array_replicate` | sch, pcb | target_file, source_reference, pattern, spacing |
+| `embed_symbol` | sch | target_file, lib_id, library_path |
+| `swap_symbol` | sch | target_file, reference, new_lib_id |
 | `add_net` | pcb | target_file |
 | `remove_net` | pcb | target_file, net_name |
 | `rename_net` | pcb | target_file, old_name, new_name |
@@ -1480,21 +2007,31 @@ Net names reject whitespace-only strings. If a name is `"   "` (spaces only), th
 | `add_power` | sch | target_file, name, position |
 | `add_no_connect` | sch | target_file, position |
 | `add_junction` | sch | target_file, position |
+| `remove_wire` | sch | target_file, uuid |
+| `remove_label` | sch | target_file, uuid, label_type |
+| `remove_junction` | sch | target_file, uuid |
+| `remove_no_connect` | sch | target_file, uuid |
 | `add_lib_entry` | lib-table | target_file, lib_name, uri |
 | `remove_lib_entry` | lib-table | target_file, lib_name |
+| `list_lib_entries` | lib-table | target_file |
 | `add_net_class` | dru | target_file, name, clearance, track_width, via_diameter, via_drill |
 | `assign_net_class` | pcb | target_file, net_name, net_class_name |
+| `modify_net_class` | dru | target_file, name |
+| `remove_net_class` | dru | target_file, name |
+| `list_net_classes` | dru | target_file |
 | `add_design_rule` | dru | target_file, name, constraint_type |
+| `modify_design_rule` | dru | target_file, name |
+| `remove_design_rule` | dru | target_file, name |
+| `list_design_rules` | dru | target_file |
+| `modify_project_settings` | pro | target_file, updates |
+| `add_copper_zone` | pcb | target_file, net_name |
+| `modify_copper_zone` | pcb | target_file, zone_uuid |
+| `remove_copper_zone` | pcb | target_file, zone_uuid or zone_index |
+| `set_board_outline` | pcb | target_file, width, height |
+| `auto_route` | pcb | target_file |
 | `repair_schematic` | sch | target_file |
 | `validate_power_nets` | sch | target_file |
 | `validate_schematic` | sch | target_file, check_symbol_resolution, check_format, check_power_nets, check_annotation |
-| `add_copper_zone` | pcb | target_file, net_name |
-| `set_board_outline` | pcb | target_file, width, height |
-| `auto_route` | pcb | target_file |
-| `create_schematic` | new sch | target_file |
-| `create_pcb` | new pcb | target_file |
-| `create_project` | new pro | target_file |
-| `create_symbol` | sym | target_file, symbol_name |
 | `parse_erc` | sch | target_file |
 | `extract_violation_positions` | sch | target_file, violation_type |
 | `validate_hlabels` | sch | target_file, expected_labels |
@@ -1502,8 +2039,23 @@ Net names reject whitespace-only strings. If a name is `"   "` (spaces only), th
 | `snap_to_grid` | sch | target_file, grid_mm |
 | `add_power_flag` | sch | target_file |
 | `rebuild_root_sheet` | sch | target_file |
-| `embed_symbol` | sch | target_file, lib_id, library_path |
-| `swap_symbol` | sch | target_file, reference, new_lib_id |
+| `update_symbols_from_library` | sch | target_file |
+| `fix_shorted_nets` | sch | target_file |
+| `fix_pin_type_mismatches` | sch | target_file |
+| `place_missing_units` | sch | target_file |
+| `remove_dangling_wires` | sch | target_file |
+| `break_wire_shorts` | sch | target_file |
+| `erc_auto_fix` | sch | target_file |
+| `create_schematic` | new sch | target_file |
+| `create_pcb` | new pcb | target_file |
+| `create_project` | new pro | target_file |
+| `create_symbol` | sym | target_file, symbol_name |
+| `create_footprint` | mod | target_file, footprint_name |
+| `add_sheet` | sch | target_file, sheet_name, file_name, position |
+| `add_sheet_pin` | sch | target_file, sheet_uuid, pin_name, position |
+| `navigate_hierarchy` | sch | target_file |
+| `query_connectivity` | pcb | target_file, query_type |
+| `propagate_symbol_change` | sch, pcb | target_file, target_files, old_lib_id, new_lib_id |
 
 ---
 
